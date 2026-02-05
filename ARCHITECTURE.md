@@ -811,7 +811,7 @@ cd src-tauri && cargo clippy -- -D warnings
 - [x] DMG packaging — *12 MB unsigned DMG, 25 MB app bundle*
 - [ ] Code signing & notarization — *requires Apple Developer account*
 - [x] README, screenshots, demo GIF — *README complete*
-- [ ] GitHub release
+- [x] GitHub release — *v0.1.0 published with DMG download*
 
 ---
 
