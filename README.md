@@ -5,11 +5,17 @@ Local Voice Toolkit for macOS — Speech-to-Text and Text-to-Speech with AI mode
 **Website:** [https://blah3-website.vercel.app](https://blah3-website.vercel.app)
 
 <p align="center">
-  <img src="docs/assets/hero-screenshot.png" alt="Blah³ App Screenshot" width="400">
+  <img src="docs/assets/app-icon.png" alt="Blah³ App Icon" width="200">
 </p>
 
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="Blah³ Demo" width="600">
+  <a href="docs/assets/demo.mp4">
+    <img src="docs/assets/hero-screenshot.png" alt="Blah³ Demo - Click to watch" width="600">
+  </a>
+</p>
+
+<p align="center">
+  <em>Click the image above to watch the demo video</em>
 </p>
 
 ## Features
