@@ -99,3 +99,61 @@ pub struct DownloadProgress {
     pub total: u64,
     pub percentage: u8,
 }
+
+/// Extract a zip file to a directory
+/// For CoreML models, the zip contains a .mlmodelc directory structure
+pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
+    tracing::info!("Extracting zip: {:?} to {:?}", zip_path, dest_dir);
+
+    let file = std::fs::File::open(zip_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+
+    // Create destination directory
+    std::fs::create_dir_all(dest_dir)?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let outpath = match file.enclosed_name() {
+            Some(path) => {
+                // The zip contains paths like "ggml-base.en-encoder.mlmodelc/..."
+                // We want to extract to dest_dir directly, stripping the top-level dir
+                let components: Vec<_> = path.components().collect();
+                if components.len() > 1 {
+                    // Skip the first component (the .mlmodelc dir name in the zip)
+                    let relative: std::path::PathBuf = components[1..].iter().collect();
+                    dest_dir.join(relative)
+                } else {
+                    // This is the top-level directory entry, skip it
+                    continue;
+                }
+            }
+            None => continue,
+        };
+
+        if file.name().ends_with('/') {
+            // It's a directory
+            std::fs::create_dir_all(&outpath)?;
+        } else {
+            // It's a file
+            if let Some(parent) = outpath.parent() {
+                if !parent.exists() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            let mut outfile = std::fs::File::create(&outpath)?;
+            std::io::copy(&mut file, &mut outfile)?;
+        }
+
+        // Set permissions on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Some(mode) = file.unix_mode() {
+                std::fs::set_permissions(&outpath, std::fs::Permissions::from_mode(mode))?;
+            }
+        }
+    }
+
+    tracing::info!("Extraction complete: {:?}", dest_dir);
+    Ok(())
+}

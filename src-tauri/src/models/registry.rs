@@ -49,6 +49,37 @@ impl ModelRegistry {
                     status: ModelStatus::Available,
                     description: "Maximum accuracy. ~2x realtime on M1.".to_string(),
                 },
+                // CoreML Encoder Models (Apple Silicon acceleration)
+                ModelInfo {
+                    id: "ggml-tiny.en-encoder.mlmodelc".to_string(),
+                    name: "CoreML Tiny Encoder".to_string(),
+                    model_type: ModelType::Stt,
+                    size_bytes: 26_000_000,
+                    size_display: "26 MB".to_string(),
+                    download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-encoder.mlmodelc.zip".to_string(),
+                    status: ModelStatus::Available,
+                    description: "CoreML encoder for Whisper Tiny. Enables Neural Engine acceleration on Apple Silicon.".to_string(),
+                },
+                ModelInfo {
+                    id: "ggml-base.en-encoder.mlmodelc".to_string(),
+                    name: "CoreML Base Encoder".to_string(),
+                    model_type: ModelType::Stt,
+                    size_bytes: 38_000_000,
+                    size_display: "38 MB".to_string(),
+                    download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-encoder.mlmodelc.zip".to_string(),
+                    status: ModelStatus::Available,
+                    description: "CoreML encoder for Whisper Base. Enables Neural Engine acceleration on Apple Silicon.".to_string(),
+                },
+                ModelInfo {
+                    id: "ggml-small.en-encoder.mlmodelc".to_string(),
+                    name: "CoreML Small Encoder".to_string(),
+                    model_type: ModelType::Stt,
+                    size_bytes: 130_000_000,
+                    size_display: "130 MB".to_string(),
+                    download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-encoder.mlmodelc.zip".to_string(),
+                    status: ModelStatus::Available,
+                    description: "CoreML encoder for Whisper Small. Enables Neural Engine acceleration on Apple Silicon.".to_string(),
+                },
                 // TTS Models (Kokoro)
                 ModelInfo {
                     id: "kokoro-v1.0.onnx".to_string(),

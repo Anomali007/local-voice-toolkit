@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::Emitter;
 
-use crate::models::{download::ModelDownloader, registry::ModelRegistry};
+use crate::models::{
+    download::{extract_zip, ModelDownloader},
+    registry::ModelRegistry,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -82,14 +85,42 @@ pub async fn download_model(
     let downloader = ModelDownloader::new();
     let model_id_for_progress = model_id.clone();
 
-    downloader
-        .download(&model.download_url, &dest_path, move |progress| {
-            let _ = window.emit("model-download-progress", (&model_id_for_progress, progress));
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+    // Check if this is a CoreML model (zip file that needs extraction)
+    let is_coreml = model_id.ends_with(".mlmodelc") && model.download_url.ends_with(".zip");
 
-    tracing::info!("Model downloaded: {}", model_id);
+    if is_coreml {
+        // Download to a temp zip file
+        let zip_path = type_dir.join(format!("{}.zip", model_id));
+
+        downloader
+            .download(&model.download_url, &zip_path, move |progress| {
+                let _ = window.emit("model-download-progress", (&model_id_for_progress, progress));
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Extract the zip to the destination directory
+        tracing::info!("Extracting CoreML model: {} -> {:?}", model_id, dest_path);
+        extract_zip(&zip_path, &dest_path).map_err(|e| format!("Failed to extract: {}", e))?;
+
+        // Clean up the zip file
+        if let Err(e) = std::fs::remove_file(&zip_path) {
+            tracing::warn!("Failed to remove temp zip file: {}", e);
+        }
+
+        tracing::info!("CoreML model extracted: {}", model_id);
+    } else {
+        // Regular file download
+        downloader
+            .download(&model.download_url, &dest_path, move |progress| {
+                let _ = window.emit("model-download-progress", (&model_id_for_progress, progress));
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+
+        tracing::info!("Model downloaded: {}", model_id);
+    }
+
     Ok(dest_path.to_string_lossy().to_string())
 }
 
