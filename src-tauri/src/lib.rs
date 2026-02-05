@@ -72,6 +72,8 @@ pub fn run() {
             commands::stt::start_recording,
             commands::stt::stop_recording,
             commands::stt::transcribe_audio,
+            commands::stt::is_silence_triggered,
+            commands::stt::is_recording,
             commands::tts::speak_text,
             commands::tts::stop_speaking,
             commands::tts::get_voices,

@@ -34,6 +34,15 @@ export interface AppSettings {
   auto_paste: boolean;
   launch_at_login: boolean;
   menu_bar_mode: boolean;
+  // Silence detection settings
+  silence_detection_enabled: boolean;
+  silence_threshold: number;
+  silence_duration: number;
+}
+
+export interface StopRecordingResult {
+  audio_data: number[];
+  silence_triggered: boolean;
 }
 
 export interface HardwareProfile {
@@ -49,9 +58,11 @@ export interface HardwareProfile {
 // STT Commands
 export const stt = {
   startRecording: () => invoke("start_recording"),
-  stopRecording: () => invoke<number[]>("stop_recording"),
+  stopRecording: () => invoke<StopRecordingResult>("stop_recording"),
   transcribe: (audioData: number[], modelPath: string) =>
     invoke<TranscriptionResult>("transcribe_audio", { audioData, modelPath }),
+  isSilenceTriggered: () => invoke<boolean>("is_silence_triggered"),
+  isRecording: () => invoke<boolean>("is_recording"),
 };
 
 // TTS Commands

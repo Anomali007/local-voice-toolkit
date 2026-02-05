@@ -32,7 +32,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 | **Auto-paste** | ✅ Working | Clipboard + simulated ⌘+V |
 | **CoreML Acceleration** | 🟡 Untested | Feature flags enabled, needs model testing |
 | **Floating Overlay** | 🟡 Basic | Component exists, needs polish |
-| **Silence Detection** | ❌ Not started | |
+| **Silence Detection** | ✅ Working | Auto-stop after configurable silence duration |
 | **Launch at Login** | ❌ Not started | |
 | **First-run Onboarding** | ❌ Not started | |
 
@@ -118,7 +118,7 @@ Global Hotkey Pressed
     → Start mic capture (cpal, 16kHz mono PCM)
     → Show floating recording overlay (waveform viz)
     
-Hotkey Released (or silence detected)
+Hotkey Released OR Silence Detected (auto-stop)
     → Stop capture
     → Feed PCM buffer to whisper-rs
     → Get transcription text
@@ -126,6 +126,39 @@ Hotkey Released (or silence detected)
         Option A: macOS pasteboard + Cmd+V simulation
         Option B: CGEventPost for character-by-character typing
     → Show brief confirmation toast
+```
+
+**Silence Detection** (auto-stop):
+
+The app automatically stops recording when silence is detected after speech:
+- Uses RMS (Root Mean Square) to measure audio levels in real-time
+- Only triggers after speech has been detected (ignores initial silence)
+- Configurable threshold (0.001–0.1 RMS) and duration (0.5–5.0 seconds)
+- Default: 1.5 seconds of silence at 0.01 RMS threshold
+
+Settings in UI (Settings → Silence Detection):
+- Enable/disable auto-stop
+- Silence duration slider (0.5–5.0 seconds)
+- Sensitivity slider (High/Medium/Low)
+
+```rust
+// Silence detection algorithm
+pub fn process(&mut self, samples: &[f32]) -> bool {
+    let rms = calculate_rms(samples);
+    let is_silent = rms < self.threshold;
+
+    if is_silent {
+        self.silent_samples += samples.len();
+        // Only trigger if speech was detected before
+        if self.speech_detected && self.silent_samples >= self.samples_needed {
+            return true; // Trigger auto-stop
+        }
+    } else {
+        self.silent_samples = 0;
+        self.speech_detected = true;
+    }
+    false
+}
 ```
 
 **Key Rust code sketch** (STT command):
@@ -339,10 +372,13 @@ models/
 | TTS Hotkey | `Cmd+Shift+S` | Read selected text |
 | STT Model | `base.en` | Dropdown of downloaded models |
 | TTS Voice | `af_heart` | Preview + select from 54 voices |
-| TTS Speed | `1.0x` | Slider 0.5x – 2.0x |
+| TTS Speed | `1.0x` | Slider 0.25x – 5.0x (clamped) |
 | Auto-paste | `true` | Paste transcription automatically |
 | Launch at login | `false` | macOS login item |
 | Menu bar mode | `true` | Run as menu bar app (no dock icon) |
+| Silence Detection | `true` | Auto-stop recording on silence |
+| Silence Threshold | `0.01` | RMS threshold (0.001–0.1) |
+| Silence Duration | `1.5s` | Seconds before auto-stop (0.5–5.0) |
 
 ---
 
@@ -366,9 +402,10 @@ blah3/
 │   │   │   └── settings.rs       # Settings CRUD
 │   │   ├── audio/
 │   │   │   ├── mod.rs
-│   │   │   ├── capture.rs        # Mic recording (cpal)
+│   │   │   ├── capture.rs        # Mic recording (cpal) with silence detection
 │   │   │   ├── playback.rs       # Audio output (rodio)
-│   │   │   └── processing.rs     # PCM conversion, resampling
+│   │   │   ├── processing.rs     # PCM conversion, resampling
+│   │   │   └── silence.rs        # RMS-based silence detection
 │   │   ├── engines/
 │   │   │   ├── mod.rs
 │   │   │   ├── whisper.rs        # whisper-rs wrapper
@@ -735,11 +772,11 @@ cd src-tauri && cargo clippy -- -D warnings
 - [x] Integrate whisper-rs for basic transcription
 - [x] Global hotkey registration for dictation
 
-### Phase 2: STT Polish 🟡
+### Phase 2: STT Polish ✅
 - [x] Hold-to-record hotkey behavior
 - [x] Floating recording overlay with waveform — *basic implementation*
 - [x] Auto-paste transcription into active app — *via clipboard + Cmd+V*
-- [ ] Silence detection for auto-stop
+- [x] Silence detection for auto-stop — *RMS-based, configurable threshold/duration*
 - [ ] CoreML model support for speed boost — *feature flags ready, models not tested*
 
 ### Phase 3: TTS Integration ✅

@@ -10,6 +10,10 @@ interface Settings {
   auto_paste: boolean;
   launch_at_login: boolean;
   menu_bar_mode: boolean;
+  // Silence detection settings
+  silence_detection_enabled: boolean;
+  silence_threshold: number;
+  silence_duration: number;
 }
 
 interface HardwareProfile {
@@ -152,6 +156,56 @@ export default function SettingsPanel() {
               onChange={(v) => updateSetting("menu_bar_mode", v)}
             />
           </SettingRow>
+        </div>
+      </section>
+
+      {/* Silence Detection */}
+      <section>
+        <h2 className="text-lg font-semibold text-slate-200 mb-3">Silence Detection</h2>
+        <p className="text-xs text-slate-400 mb-3">
+          Automatically stop recording when silence is detected after speaking.
+        </p>
+        <div className="space-y-3">
+          <SettingRow label="Enable auto-stop">
+            <Toggle
+              checked={settings.silence_detection_enabled}
+              onChange={(v) => updateSetting("silence_detection_enabled", v)}
+            />
+          </SettingRow>
+          {settings.silence_detection_enabled && (
+            <>
+              <SettingRow label="Silence duration">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="5"
+                    step="0.5"
+                    value={settings.silence_duration}
+                    onChange={(e) => updateSetting("silence_duration", parseFloat(e.target.value))}
+                    className="w-24 accent-sky-500"
+                  />
+                  <span className="text-sm text-slate-400 w-12">{settings.silence_duration}s</span>
+                </div>
+              </SettingRow>
+              <SettingRow label="Sensitivity">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0.001"
+                    max="0.1"
+                    step="0.005"
+                    value={settings.silence_threshold}
+                    onChange={(e) => updateSetting("silence_threshold", parseFloat(e.target.value))}
+                    className="w-24 accent-sky-500"
+                  />
+                  <span className="text-sm text-slate-400 w-16">
+                    {settings.silence_threshold < 0.02 ? "High" : settings.silence_threshold < 0.05 ? "Medium" : "Low"}
+                  </span>
+                </div>
+              </SettingRow>
+            </>
+          )}
         </div>
       </section>
 

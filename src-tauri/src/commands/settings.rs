@@ -13,6 +13,25 @@ pub struct AppSettings {
     pub auto_paste: bool,
     pub launch_at_login: bool,
     pub menu_bar_mode: bool,
+    // Silence detection settings
+    #[serde(default = "default_silence_enabled")]
+    pub silence_detection_enabled: bool,
+    #[serde(default = "default_silence_threshold")]
+    pub silence_threshold: f32,
+    #[serde(default = "default_silence_duration")]
+    pub silence_duration: f32,
+}
+
+fn default_silence_enabled() -> bool {
+    true
+}
+
+fn default_silence_threshold() -> f32 {
+    0.01
+}
+
+fn default_silence_duration() -> f32 {
+    1.5
 }
 
 impl Default for AppSettings {
@@ -26,6 +45,9 @@ impl Default for AppSettings {
             auto_paste: true,
             launch_at_login: false,
             menu_bar_mode: true,
+            silence_detection_enabled: default_silence_enabled(),
+            silence_threshold: default_silence_threshold(),
+            silence_duration: default_silence_duration(),
         }
     }
 }

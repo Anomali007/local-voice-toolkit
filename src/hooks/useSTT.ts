@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -7,11 +7,18 @@ interface TranscriptionResult {
   duration_ms: number;
 }
 
+interface StopRecordingResult {
+  audio_data: number[];
+  silence_triggered: boolean;
+}
+
 export function useSTT() {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcript, setTranscript] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [silenceTriggered, setSilenceTriggered] = useState(false);
+  const silencePollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Listen for hotkey events from the backend
   useEffect(() => {
@@ -65,44 +72,90 @@ export function useSTT() {
     };
   }, []);
 
+  // Poll for silence detection auto-stop
+  const startSilencePolling = useCallback(() => {
+    if (silencePollingRef.current) return;
+
+    silencePollingRef.current = setInterval(async () => {
+      try {
+        const triggered = await invoke<boolean>("is_silence_triggered");
+        if (triggered) {
+          console.log("Silence detected - auto-stopping recording");
+          setSilenceTriggered(true);
+          stopSilencePolling();
+          // The actual stop will be handled by the recording check
+        }
+      } catch {
+        // Ignore polling errors
+      }
+    }, 100); // Poll every 100ms
+  }, []);
+
+  const stopSilencePolling = useCallback(() => {
+    if (silencePollingRef.current) {
+      clearInterval(silencePollingRef.current);
+      silencePollingRef.current = null;
+    }
+  }, []);
+
+  // Auto-stop when silence is detected
+  useEffect(() => {
+    if (silenceTriggered && isRecording) {
+      stopRecording();
+    }
+  }, [silenceTriggered, isRecording]);
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => stopSilencePolling();
+  }, [stopSilencePolling]);
+
   // Manual start recording (from UI button)
   const startRecording = useCallback(async () => {
     try {
       setError(null);
+      setSilenceTriggered(false);
       await invoke("start_recording");
       setIsRecording(true);
+      startSilencePolling();
     } catch (err) {
       setError(String(err));
       console.error("Failed to start recording:", err);
     }
-  }, []);
+  }, [startSilencePolling]);
 
   // Manual stop recording (from UI button)
   const stopRecording = useCallback(async () => {
     try {
+      stopSilencePolling();
       setIsRecording(false);
       setIsTranscribing(true);
       setError(null);
 
-      const audioData = await invoke<number[]>("stop_recording");
+      const result = await invoke<StopRecordingResult>("stop_recording");
+
+      if (result.silence_triggered) {
+        console.log("Recording was auto-stopped by silence detection");
+      }
 
       // Get settings for model path
       const settings = await invoke<{ stt_model: string }>("get_settings");
       const modelPath = `${getModelsDir()}/stt/${settings.stt_model}`;
 
-      const result = await invoke<TranscriptionResult>("transcribe_audio", {
-        audioData,
+      const transcription = await invoke<TranscriptionResult>("transcribe_audio", {
+        audioData: result.audio_data,
         modelPath,
       });
 
-      setTranscript(result.text);
+      setTranscript(transcription.text);
+      setSilenceTriggered(false);
     } catch (err) {
       setError(String(err));
       console.error("Failed to stop recording or transcribe:", err);
     } finally {
       setIsTranscribing(false);
     }
-  }, []);
+  }, [stopSilencePolling]);
 
   const clearTranscript = useCallback(() => {
     setTranscript(null);
@@ -114,6 +167,7 @@ export function useSTT() {
     isTranscribing,
     transcript,
     error,
+    silenceTriggered,
     startRecording,
     stopRecording,
     clearTranscript,
