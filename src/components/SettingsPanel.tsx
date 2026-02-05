@@ -15,6 +15,8 @@ interface Settings {
   silence_detection_enabled: boolean;
   silence_threshold: number;
   silence_duration: number;
+  // Onboarding
+  onboarding_completed: boolean;
 }
 
 interface HardwareProfile {

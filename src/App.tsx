@@ -1,14 +1,53 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import DictationPanel from "./components/DictationPanel";
 import ScreenReader from "./components/ScreenReader";
 import ModelManager from "./components/ModelManager";
 import SettingsPanel from "./components/SettingsPanel";
 import StatusIndicator from "./components/StatusIndicator";
+import Onboarding from "./components/Onboarding";
 
 type Tab = "dictation" | "reader" | "models" | "settings";
 
+interface AppSettings {
+  onboarding_completed: boolean;
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("dictation");
+  const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    checkOnboardingStatus();
+  }, []);
+
+  const checkOnboardingStatus = async () => {
+    try {
+      const settings = await invoke<AppSettings>("get_settings");
+      setShowOnboarding(!settings.onboarding_completed);
+    } catch (err) {
+      console.error("Failed to check onboarding status:", err);
+      setShowOnboarding(false);
+    }
+  };
+
+  const handleOnboardingComplete = () => {
+    setShowOnboarding(false);
+  };
+
+  // Show loading state while checking onboarding status
+  if (showOnboarding === null) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-500" />
+      </div>
+    );
+  }
+
+  // Show onboarding if not completed
+  if (showOnboarding) {
+    return <Onboarding onComplete={handleOnboardingComplete} />;
+  }
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: "dictation", label: "Dictation", icon: "🎤" },

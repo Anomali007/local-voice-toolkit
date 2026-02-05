@@ -20,6 +20,9 @@ pub struct AppSettings {
     pub silence_threshold: f32,
     #[serde(default = "default_silence_duration")]
     pub silence_duration: f32,
+    // Onboarding
+    #[serde(default)]
+    pub onboarding_completed: bool,
 }
 
 fn default_silence_enabled() -> bool {
@@ -48,6 +51,7 @@ impl Default for AppSettings {
             silence_detection_enabled: default_silence_enabled(),
             silence_threshold: default_silence_threshold(),
             silence_duration: default_silence_duration(),
+            onboarding_completed: false,
         }
     }
 }

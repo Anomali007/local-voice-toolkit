@@ -34,7 +34,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 | **Floating Overlay** | ✅ Polished | Compact pill with elapsed time, audio levels, stop button |
 | **Silence Detection** | ✅ Working | Auto-stop after configurable silence duration |
 | **Launch at Login** | ✅ Working | Via tauri-plugin-autostart (LaunchAgent) |
-| **First-run Onboarding** | ❌ Not started | |
+| **First-run Onboarding** | ✅ Working | 5-step wizard: welcome, permissions, models, hotkeys, complete |
 
 ---
 
@@ -432,6 +432,7 @@ blah3/
 │   │   ├── SettingsPanel.tsx     # Configuration + silence detection + autostart
 │   │   ├── FloatingOverlay.tsx   # Compact pill overlay with timer, audio levels, stop
 │   │   ├── StatusIndicator.tsx   # Global status + toast notifications
+│   │   ├── Onboarding.tsx        # First-run wizard (permissions, models, hotkeys)
 │   │   ├── VoicePreview.tsx      # Preview TTS voices
 │   │   └── WaveformViz.tsx       # Audio waveform visualization
 │   ├── hooks/
@@ -798,7 +799,7 @@ cd src-tauri && cargo clippy -- -D warnings
 - [x] Keyboard shortcut customization — *configurable in settings*
 
 ### Phase 5: Polish & Ship
-- [ ] First-run onboarding flow
+- [x] First-run onboarding flow — *5-step wizard with permissions, model download, hotkeys*
 - [ ] Error handling & edge cases — *basic error handling in place*
 - [ ] DMG packaging with notarization
 - [x] README, screenshots, demo GIF — *README complete*

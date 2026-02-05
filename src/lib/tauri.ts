@@ -38,6 +38,8 @@ export interface AppSettings {
   silence_detection_enabled: boolean;
   silence_threshold: number;
   silence_duration: number;
+  // Onboarding
+  onboarding_completed: boolean;
 }
 
 export interface StopRecordingResult {
