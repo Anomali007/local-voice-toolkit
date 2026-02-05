@@ -2,6 +2,14 @@
 
 Local Voice Toolkit for macOS — Speech-to-Text and Text-to-Speech with AI models running 100% offline on Apple Silicon.
 
+<p align="center">
+  <img src="docs/assets/hero-screenshot.png" alt="Blah³ App Screenshot" width="400">
+</p>
+
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="Blah³ Demo" width="600">
+</p>
+
 ## Features
 
 - **Dictation Mode**: Press a global hotkey → speak → text appears wherever your cursor is
