@@ -1,15 +1,49 @@
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use tauri::State;
-use tokio::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::audio::playback::AudioPlayer;
+use crate::engines::kokoro::KokoroEngine;
 
-#[derive(Default)]
-pub struct TtsState {
-    pub is_speaking: AtomicBool,
-    pub player: Mutex<Option<AudioPlayer>>,
+// Global player instance for stop functionality
+static CURRENT_PLAYER: OnceLock<Arc<Mutex<Option<AudioPlayer>>>> = OnceLock::new();
+
+// Global TTS engine cache - lazy initialized on first use
+// Using tokio Mutex for async initialization
+static TTS_ENGINE: OnceLock<Arc<TokioMutex<Option<KokoroEngine>>>> = OnceLock::new();
+
+fn get_player_state() -> &'static Arc<Mutex<Option<AudioPlayer>>> {
+    CURRENT_PLAYER.get_or_init(|| Arc::new(Mutex::new(None)))
+}
+
+fn get_tts_engine_state() -> &'static Arc<TokioMutex<Option<KokoroEngine>>> {
+    TTS_ENGINE.get_or_init(|| Arc::new(TokioMutex::new(None)))
+}
+
+fn get_models_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.blahcubed.app")
+        .join("models")
+        .join("tts")
+}
+
+async fn get_or_init_tts_engine() -> Result<(), String> {
+    let state = get_tts_engine_state();
+    let mut guard = state.lock().await;
+
+    if guard.is_none() {
+        let model_dir = get_models_dir();
+        tracing::info!("Initializing TTS engine from: {:?}", model_dir);
+
+        let engine = KokoroEngine::new(model_dir)
+            .await
+            .map_err(|e| e.to_string())?;
+        *guard = Some(engine);
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,53 +56,57 @@ pub struct VoiceInfo {
 
 #[tauri::command]
 pub async fn speak_text(
-    state: State<'_, Arc<TtsState>>,
     text: String,
     voice_id: String,
     speed: f32,
     _model_path: String,
 ) -> Result<(), String> {
-    if state.is_speaking.load(Ordering::SeqCst) {
-        return Err("Already speaking".to_string());
+    tracing::info!("Speaking text with voice {}: {}", voice_id, text);
+
+    // Initialize TTS engine if not already done
+    get_or_init_tts_engine().await?;
+
+    // Synthesize speech
+    let audio_buffer = {
+        let state = get_tts_engine_state();
+        let mut guard = state.lock().await;
+        let engine = guard
+            .as_mut()
+            .ok_or_else(|| "TTS engine not initialized".to_string())?;
+
+        engine
+            .synthesize(&text, &voice_id, speed)
+            .map_err(|e| e.to_string())?
+    };
+
+    let player = AudioPlayer::new().map_err(|e| e.to_string())?;
+
+    // Store player for potential stop
+    {
+        let mut guard = get_player_state().lock().unwrap();
+        *guard = Some(AudioPlayer::new().map_err(|e| e.to_string())?);
     }
 
-    tracing::info!("Speaking text with voice {}: {}", voice_id, text);
-    state.is_speaking.store(true, Ordering::SeqCst);
+    player
+        .play(audio_buffer.samples(), audio_buffer.sample_rate)
+        .map_err(|e| e.to_string())?;
 
-    // TODO: Integrate kokoroxide TTS engine
-    // For now, this is a placeholder that will be implemented
-    // when the TTS engine is integrated
-
-    // Placeholder: Generate silence for testing
-    let sample_rate = 24000;
-    let duration_secs = 1.0;
-    let samples: Vec<f32> = vec![0.0; (sample_rate as f32 * duration_secs * speed) as usize];
-
-    let mut player_guard = state.player.lock().await;
-    let player = AudioPlayer::new().map_err(|e| e.to_string())?;
-    player.play(&samples, sample_rate).map_err(|e| e.to_string())?;
-    *player_guard = Some(player);
-
-    state.is_speaking.store(false, Ordering::SeqCst);
-    tracing::info!("Finished speaking");
-
+    tracing::info!(
+        "Started speaking ({:.2}s of audio)",
+        audio_buffer.duration_secs()
+    );
     Ok(())
 }
 
 #[tauri::command]
-pub async fn stop_speaking(state: State<'_, Arc<TtsState>>) -> Result<(), String> {
-    if !state.is_speaking.load(Ordering::SeqCst) {
-        return Ok(());
-    }
-
+pub async fn stop_speaking() -> Result<(), String> {
     tracing::info!("Stopping speech...");
 
-    let mut player_guard = state.player.lock().await;
-    if let Some(player) = player_guard.take() {
+    let mut guard = get_player_state().lock().unwrap();
+    if let Some(player) = guard.take() {
         player.stop();
     }
 
-    state.is_speaking.store(false, Ordering::SeqCst);
     Ok(())
 }
 
@@ -91,6 +129,12 @@ pub fn get_voices() -> Vec<VoiceInfo> {
         VoiceInfo {
             id: "af_nicole".to_string(),
             name: "Nicole".to_string(),
+            language: "en-US".to_string(),
+            gender: "Female".to_string(),
+        },
+        VoiceInfo {
+            id: "af_sky".to_string(),
+            name: "Sky".to_string(),
             language: "en-US".to_string(),
             gender: "Female".to_string(),
         },

@@ -21,7 +21,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 |---------|--------|-------|
 | **Tauri v2 + React** | ✅ Complete | Full app scaffolding with Tailwind CSS |
 | **STT (whisper-rs)** | ✅ Working | Hold-to-record transcription with auto-paste |
-| **TTS (kokoroxide)** | 🟡 Placeholder | Plays test tone; awaiting kokoroxide integration |
+| **TTS (kokoro-tiny)** | ✅ Working | Real TTS synthesis with 11 voices, speed control |
 | **Global Hotkeys** | ✅ Working | ⌘+⇧+D (dictation), ⌘+⇧+S (read aloud) |
 | **Audio Capture** | ✅ Working | 16kHz mono via cpal |
 | **Audio Playback** | ✅ Working | Via rodio |
@@ -57,7 +57,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 │  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐  │
 │  │   STT Engine │  │  TTS Engine  │  │  macOS Native  │  │
 │  │              │  │              │  │    Services    │  │
-│  │  whisper-rs  │  │  kokoroxide  │  │                │  │
+│  │  whisper-rs  │  │ kokoro-tiny  │  │                │  │
 │  │  (whisper.   │  │  (Kokoro     │  │ • Global Keys  │  │
 │  │   cpp +      │  │   82M via    │  │ • Accessibility│  │
 │  │   CoreML)    │  │   ONNX)      │  │ • Mic Capture  │  │
@@ -78,7 +78,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 | Crate | Purpose | Status | Notes |
 |-------|---------|--------|-------|
 | **`whisper-rs`** | STT inference | ✅ Integrated | Rust bindings for whisper.cpp; CoreML + Metal acceleration on Apple Silicon |
-| **`kokoroxide`** | TTS inference | 🟡 Pending | Pure Rust Kokoro-82M via ONNX Runtime; placeholder tone implemented |
+| **`kokoro-tiny`** | TTS inference | ✅ Integrated | Minimal Kokoro-82M via ONNX Runtime; uses espeak-rs for phonemization |
 | **`cpal`** | Audio I/O | ✅ Integrated | Cross-platform low-level audio capture at 16kHz mono |
 | **`rodio`** | Audio playback | ✅ Integrated | High-level audio sink for TTS output |
 | **`tauri`** v2 | App framework | ✅ Integrated | Rust + web frontend; tray icon, window management |
@@ -164,7 +164,7 @@ async fn transcribe(audio_data: Vec<f32>, model_path: String) -> Result<String, 
 
 **Goal**: Select text anywhere → press hotkey → hear it read aloud with a natural AI voice.
 
-**Engine**: `kokoroxide` (Rust Kokoro-82M via ONNX)
+**Engine**: `kokoro-tiny` (Rust Kokoro-82M via ONNX Runtime)
 
 **Why Kokoro-82M**:
 - Only 82M parameters — fits easily in RAM
@@ -172,57 +172,89 @@ async fn transcribe(audio_data: Vec<f32>, model_path: String) -> Result<String, 
 - Sub-0.3 second generation for typical sentences
 - 54 voices across 8 languages
 - ONNX format = no Python dependency at runtime
-- Pure Rust crate (`kokoroxide`) available on crates.io
+- Uses espeak-rs for phonemization (no tokenizer.json needed)
 
-**Required model files** (downloaded on first run):
+**Required model files** (downloaded via Model Manager):
 - `kokoro-v1.0.onnx` (~330 MB) — the neural network
-- `voices-v1.0.bin` (~54 voice style vectors)
-- `tokenizer.json` — text tokenization
+- `voices-v1.0.bin` (~5 MB) — voice style vectors
+
+**System dependency**:
+- `espeak-ng` must be installed: `brew install espeak-ng`
 
 **Pipeline**:
 ```
 Global Hotkey Pressed
-    → Get selected text via macOS Accessibility API
-        (AXUIElementCopyAttributeValue → kAXSelectedTextAttribute)
-    → If no selection, get text under cursor / clipboard
-    → Chunk text into sentences (for streaming playback)
-    → For each chunk:
-        → kokoroxide::generate_speech(chunk, voice, speed)
-        → Stream PCM audio to rodio sink (overlapping generation + playback)
-    → Show floating player with pause/stop/speed controls
+    → Get selected text via AppleScript clipboard method
+    → If no selection, use clipboard contents
+    → Initialize TTS engine (lazy-loaded, cached for app lifetime)
+    → Synthesize speech: tts.synthesize(text, voice_id) → Vec<f32>
+    → Apply speed via sample rate adjustment (24kHz * speed)
+    → Play through rodio AudioPlayer
+    → Show floating player with stop control
 ```
 
-**Key Rust code sketch** (TTS command):
+**Key Rust code** (TTS engine wrapper):
 ```rust
-use kokoroxide::{KokoroTTS, load_voice_style};
-use rodio::{OutputStream, Sink, buffer::SamplesBuffer};
+use kokoro_tiny::TtsEngine;
+
+pub struct KokoroEngine {
+    tts: TtsEngine,
+    model_dir: PathBuf,
+}
+
+impl KokoroEngine {
+    pub async fn new(model_dir: PathBuf) -> Result<Self> {
+        let model_path = model_dir.join("kokoro-v1.0.onnx");
+        let voices_path = model_dir.join("voices-v1.0.bin");
+
+        // Validate required files exist
+        if !model_path.exists() || !voices_path.exists() {
+            return Err(anyhow!("Missing TTS files. Please download from Models tab."));
+        }
+
+        let tts = TtsEngine::with_paths(
+            model_path.to_string_lossy().as_ref(),
+            voices_path.to_string_lossy().as_ref(),
+        ).await?;
+
+        Ok(Self { tts, model_dir })
+    }
+
+    pub fn synthesize(&mut self, text: &str, voice_id: &str, speed: f32) -> Result<AudioBuffer> {
+        let samples = self.tts.synthesize(text, Some(voice_id))?;
+        // Speed control via sample rate adjustment
+        let adjusted_sample_rate = (24000.0 * speed) as u32;
+        Ok(AudioBuffer::new(samples, adjusted_sample_rate))
+    }
+}
+```
+
+**TTS command** (in `commands/tts.rs`):
+```rust
+// Global TTS engine cache - lazy initialized on first use
+static TTS_ENGINE: OnceLock<Arc<TokioMutex<Option<KokoroEngine>>>> = OnceLock::new();
 
 #[tauri::command]
-async fn speak_text(
-    text: String, 
+pub async fn speak_text(
+    text: String,
     voice_id: String,
     speed: f32,
-    model_path: String,
-    voice_path: String,
+    _model_path: String,
 ) -> Result<(), String> {
-    let tts = KokoroTTS::new(&model_path, "tokenizer.json")
-        .map_err(|e| e.to_string())?;
-    let voice = load_voice_style(&voice_path)
-        .map_err(|e| e.to_string())?;
-    
-    let audio = tts.generate_speech(&text, &voice, speed)
-        .map_err(|e| e.to_string())?;
-    
-    // Play through system audio
-    let (_stream, stream_handle) = OutputStream::try_default()
-        .map_err(|e| e.to_string())?;
-    let sink = Sink::try_new(&stream_handle)
-        .map_err(|e| e.to_string())?;
-    
-    let source = SamplesBuffer::new(1, 24000, audio.samples().to_vec());
-    sink.append(source);
-    sink.sleep_until_end();
-    
+    // Initialize TTS engine if not already done
+    get_or_init_tts_engine().await?;
+
+    // Synthesize speech
+    let audio_buffer = {
+        let state = get_tts_engine_state();
+        let mut guard = state.lock().await;
+        let engine = guard.as_mut().ok_or("TTS engine not initialized")?;
+        engine.synthesize(&text, &voice_id, speed)?
+    };
+
+    // Play audio
+    let player = AudioPlayer::new()?;
+    player.play(audio_buffer.samples(), audio_buffer.sample_rate)?;
     Ok(())
 }
 ```
@@ -285,9 +317,10 @@ models/
 │   └── ggml-base.en-coreml.mlmodelc/  (CoreML version)
 └── tts/
     ├── kokoro-v1.0.onnx          (330 MB)
-    ├── voices-v1.0.bin
-    └── tokenizer.json
+    └── voices-v1.0.bin           (5 MB)
 ```
+
+> **Note**: kokoro-tiny uses espeak-rs for phonemization, so no tokenizer.json is needed.
 
 **Download sources**:
 - STT models: `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/`
@@ -405,8 +438,8 @@ tokio = { version = "1", features = ["full"] }
 # STT
 whisper-rs = "0.13"  # CoreML/Metal enabled via features above
 
-# TTS (pending integration)
-# kokoroxide = "0.3"  # Uncomment when ready to integrate
+# TTS
+kokoro-tiny = "0.1"  # Kokoro-82M via ONNX, uses espeak-rs for phonemization
 
 # Audio
 cpal = "0.15"
@@ -430,7 +463,7 @@ futures-util = "0.3"
 # macos-accessibility-client = "0.0.1"  # Uncomment when ready
 ```
 
-> **Note**: The current implementation uses AppleScript for getting selected text rather than the AXUIElement API directly. The `kokoroxide` and `macos-accessibility-client` crates are commented out pending integration.
+> **Note**: kokoro-tiny requires `ort` (ONNX Runtime) which is pinned to `2.0.0-rc.10` for compatibility with rustc < 1.88. Run `cargo update ort@2.0.0-rc.11 --precise 2.0.0-rc.10` if you encounter version conflicts.
 
 ---
 
@@ -686,8 +719,9 @@ cd src-tauri && cargo clippy -- -D warnings
 ### Build Notes
 
 - **whisper-rs with CoreML**: Requires full Xcode (not just CLI tools) for CoreML model compilation. The `coreml` feature flag enables ANE acceleration.
-- **kokoroxide**: Needs `espeak-ng` for phonemization. Install via Homebrew, or bundle the dylib.
-- **ONNX Runtime**: Pulled automatically by kokoroxide. On Apple Silicon, it uses the Accelerate framework.
+- **kokoro-tiny**: Requires `espeak-ng` for phonemization. Install via `brew install espeak-ng`.
+- **ONNX Runtime**: Pulled automatically by kokoro-tiny (via `ort` crate). Pin to `2.0.0-rc.10` for rustc < 1.88 compatibility.
+- **ort version conflict**: If cargo fails with yanked `ort` versions, run: `cargo update ort@2.0.0-rc.11 --precise 2.0.0-rc.10`
 
 ---
 
@@ -708,12 +742,13 @@ cd src-tauri && cargo clippy -- -D warnings
 - [ ] Silence detection for auto-stop
 - [ ] CoreML model support for speed boost — *feature flags ready, models not tested*
 
-### Phase 3: TTS Integration 🟡
-- [ ] Integrate kokoroxide for speech synthesis — *placeholder with test tone*
+### Phase 3: TTS Integration ✅
+- [x] Integrate kokoro-tiny for speech synthesis — *working with 11 voices*
 - [x] Read selected text via Accessibility API — *AppleScript/clipboard method*
-- [ ] Streaming playback (chunk + overlap)
-- [x] Voice selection UI with preview — *UI ready, awaiting TTS engine*
-- [ ] Floating player with pause/stop/speed controls
+- [x] Speed control via sample rate adjustment
+- [x] Voice selection UI with preview — *8 voices available in UI*
+- [x] Floating player with stop control
+- [ ] Streaming playback (chunk + overlap) — *future enhancement*
 
 ### Phase 4: Model Manager & Settings ✅
 - [x] Model catalog with download/delete
@@ -747,11 +782,12 @@ The architecture is modular — swap engines without touching the UI:
 ## Key Resources
 
 - **whisper-rs**: https://github.com/tazz4843/whisper-rs
-- **kokoroxide**: https://lib.rs/crates/kokoroxide  
-- **Kokoros (CLI)**: https://github.com/lucasjinreal/Kokoros
+- **kokoro-tiny**: https://crates.io/crates/kokoro-tiny
+- **kokoro-tiny GitHub**: https://github.com/8b-is/kokoro-tiny
 - **Tauri v2 Docs**: https://v2.tauri.app
 - **Tauri Global Shortcut**: https://v2.tauri.app/plugin/global-shortcut/
 - **Tauri macOS Permissions**: https://github.com/ayangweb/tauri-plugin-macos-permissions
 - **FluidVoice (inspiration)**: https://github.com/altic-dev/FluidVoice
 - **Kokoro-82M Model**: https://huggingface.co/hexgrad/Kokoro-82M
 - **Whisper CoreML Models**: https://huggingface.co/ggerganov/whisper.cpp
+- **espeak-ng**: https://github.com/espeak-ng/espeak-ng

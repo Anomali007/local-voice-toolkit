@@ -24,7 +24,7 @@ Local Voice Toolkit for macOS — Speech-to-Text and Text-to-Speech with AI mode
 - **Frontend**: React + Tailwind CSS
 - **Backend**: Rust + Tauri v2
 - **STT Engine**: whisper-rs (whisper.cpp with CoreML/Metal acceleration)
-- **TTS Engine**: kokoroxide (Kokoro-82M via ONNX)
+- **TTS Engine**: kokoro-tiny (Kokoro-82M via ONNX Runtime)
 
 ## Requirements
 

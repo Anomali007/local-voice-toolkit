@@ -1,5 +1,5 @@
 pub mod whisper;
-// pub mod kokoro;  // Uncomment when kokoroxide is integrated
+pub mod kokoro;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
