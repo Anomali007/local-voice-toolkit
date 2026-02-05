@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 
 interface Settings {
   stt_hotkey: string;
@@ -34,7 +35,25 @@ export default function SettingsPanel() {
   useEffect(() => {
     loadSettings();
     loadHardware();
+    syncAutostartState();
   }, []);
+
+  // Sync the settings with actual autostart state on mount
+  const syncAutostartState = async () => {
+    try {
+      const enabled = await isAutostartEnabled();
+      const currentSettings = await invoke<Settings>("get_settings");
+
+      // If settings don't match actual state, update settings to match
+      if (currentSettings.launch_at_login !== enabled) {
+        const newSettings = { ...currentSettings, launch_at_login: enabled };
+        await invoke("update_settings", { settings: newSettings });
+        setSettings(newSettings);
+      }
+    } catch (err) {
+      console.error("Failed to sync autostart state:", err);
+    }
+  };
 
   const loadSettings = async () => {
     try {
@@ -70,6 +89,36 @@ export default function SettingsPanel() {
     if (settings) {
       const newSettings = { ...settings, [key]: value };
       saveSettings(newSettings);
+    }
+  };
+
+  // Special handler for launch at login - calls the autostart API
+  const updateLaunchAtLogin = async (enabled: boolean) => {
+    if (!settings) return;
+
+    setSaving(true);
+    try {
+      // Update the system autostart setting
+      if (enabled) {
+        await enableAutostart();
+      } else {
+        await disableAutostart();
+      }
+
+      // Verify it worked
+      const actualState = await isAutostartEnabled();
+      if (actualState !== enabled) {
+        console.warn("Autostart state mismatch - requested:", enabled, "actual:", actualState);
+      }
+
+      // Save to our settings
+      const newSettings = { ...settings, launch_at_login: actualState };
+      await invoke("update_settings", { settings: newSettings });
+      setSettings(newSettings);
+    } catch (err) {
+      console.error("Failed to update launch at login:", err);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -147,7 +196,7 @@ export default function SettingsPanel() {
           <SettingRow label="Launch at login">
             <Toggle
               checked={settings.launch_at_login}
-              onChange={(v) => updateSetting("launch_at_login", v)}
+              onChange={(v) => updateLaunchAtLogin(v)}
             />
           </SettingRow>
           <SettingRow label="Menu bar mode">

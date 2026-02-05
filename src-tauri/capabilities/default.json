@@ -10,11 +10,16 @@
     "core:window:allow-hide",
     "core:window:allow-close",
     "core:window:allow-set-focus",
-    "core:tray-icon:default",
+    "core:tray:default",
+    "core:menu:default",
+    "core:event:default",
     "global-shortcut:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "global-shortcut:allow-is-registered",
-    "shell:allow-open"
+    "shell:allow-open",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
   ]
 }

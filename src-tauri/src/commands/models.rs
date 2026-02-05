@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tauri::Emitter;
 
 use crate::models::{download::ModelDownloader, registry::ModelRegistry};
 
@@ -79,10 +80,11 @@ pub async fn download_model(
 
     let dest_path = type_dir.join(&model_id);
     let downloader = ModelDownloader::new();
+    let model_id_for_progress = model_id.clone();
 
     downloader
         .download(&model.download_url, &dest_path, move |progress| {
-            let _ = window.emit("model-download-progress", (&model_id, progress));
+            let _ = window.emit("model-download-progress", (&model_id_for_progress, progress));
         })
         .await
         .map_err(|e| e.to_string())?;

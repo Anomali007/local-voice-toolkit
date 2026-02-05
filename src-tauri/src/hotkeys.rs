@@ -36,15 +36,12 @@ pub fn register_hotkeys(app: &AppHandle) -> Result<(), Box<dyn std::error::Error
     tracing::info!("Registering STT hotkey: {:?}", stt_shortcut);
     tracing::info!("Registering TTS hotkey: {:?}", tts_shortcut);
 
-    let app_handle = app.clone();
-
     app.global_shortcut().on_shortcut(stt_shortcut, move |app, shortcut, event| {
-        handle_stt_shortcut(app, shortcut, event);
+        handle_stt_shortcut(app, shortcut, event.state);
     })?;
 
-    let app_handle2 = app_handle.clone();
     app.global_shortcut().on_shortcut(tts_shortcut, move |app, shortcut, event| {
-        handle_tts_shortcut(app, shortcut, event);
+        handle_tts_shortcut(app, shortcut, event.state);
     })?;
 
     app.global_shortcut().register(stt_shortcut)?;

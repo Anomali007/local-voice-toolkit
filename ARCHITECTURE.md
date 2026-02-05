@@ -33,7 +33,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 | **CoreML Acceleration** | 🟡 Untested | Feature flags enabled, needs model testing |
 | **Floating Overlay** | 🟡 Basic | Component exists, needs polish |
 | **Silence Detection** | ✅ Working | Auto-stop after configurable silence duration |
-| **Launch at Login** | ❌ Not started | |
+| **Launch at Login** | ✅ Working | Via tauri-plugin-autostart (LaunchAgent) |
 | **First-run Onboarding** | ❌ Not started | |
 
 ---
@@ -84,6 +84,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 | **`tauri`** v2 | App framework | ✅ Integrated | Rust + web frontend; tray icon, window management |
 | **`tauri-plugin-global-shortcut`** | Global hotkeys | ✅ Integrated | Hold-to-record for STT, single press for TTS |
 | **`tauri-plugin-shell`** | Shell access | ✅ Integrated | Used for AppleScript execution |
+| **`tauri-plugin-autostart`** | Launch at login | ✅ Integrated | macOS LaunchAgent for auto-start |
 | **`hound`** | WAV encoding | ✅ Integrated | Write audio buffers to WAV format |
 | **`reqwest`** | Model downloads | ✅ Integrated | Download models from HuggingFace with progress tracking |
 | **`sysinfo`** | Hardware detection | ✅ Integrated | Detect RAM, CPU cores, chip type for model recommendations |
@@ -791,7 +792,7 @@ cd src-tauri && cargo clippy -- -D warnings
 - [x] Model catalog with download/delete
 - [x] Persistent settings (JSON in app support dir)
 - [x] Menu bar / tray icon mode — *tray icon works, dock icon still shows*
-- [ ] Launch at login option
+- [x] Launch at login option — *via tauri-plugin-autostart*
 - [x] Keyboard shortcut customization — *configurable in settings*
 
 ### Phase 5: Polish & Ship
