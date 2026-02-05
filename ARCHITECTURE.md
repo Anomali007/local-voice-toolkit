@@ -11,7 +11,30 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 **Name**: Blah³ — because talking is just organized blah blah blah.
 **Package ID**: `com.blahcubed.app`
 **Crate name**: `blah3`
-**GitHub**: `github.com/<your-user>/blah3`
+**GitHub**: `github.com/Anomali007/blah3`
+
+---
+
+## Current Implementation Status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Tauri v2 + React** | ✅ Complete | Full app scaffolding with Tailwind CSS |
+| **STT (whisper-rs)** | ✅ Working | Hold-to-record transcription with auto-paste |
+| **TTS (kokoroxide)** | 🟡 Placeholder | Plays test tone; awaiting kokoroxide integration |
+| **Global Hotkeys** | ✅ Working | ⌘+⇧+D (dictation), ⌘+⇧+S (read aloud) |
+| **Audio Capture** | ✅ Working | 16kHz mono via cpal |
+| **Audio Playback** | ✅ Working | Via rodio |
+| **Model Manager** | ✅ Working | Download/delete with progress UI |
+| **Settings Persistence** | ✅ Working | JSON in Application Support |
+| **System Tray** | ✅ Working | Show/Quit menu |
+| **Selected Text** | ✅ Working | AppleScript clipboard method |
+| **Auto-paste** | ✅ Working | Clipboard + simulated ⌘+V |
+| **CoreML Acceleration** | 🟡 Untested | Feature flags enabled, needs model testing |
+| **Floating Overlay** | 🟡 Basic | Component exists, needs polish |
+| **Silence Detection** | ❌ Not started | |
+| **Launch at Login** | ❌ Not started | |
+| **First-run Onboarding** | ❌ Not started | |
 
 ---
 
@@ -52,18 +75,18 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 
 ## Core Rust Crates
 
-| Crate | Purpose | Why This One |
-|-------|---------|-------------|
-| **`whisper-rs`** | STT inference | Rust bindings for whisper.cpp; CoreML + Metal acceleration on Apple Silicon (8-12x speedup); mature, well-tested |
-| **`kokoroxide`** | TTS inference | Pure Rust Kokoro-82M via ONNX Runtime; 82M params, sub-0.3s generation; top-ranked on HuggingFace TTS Arena |
-| **`cpal`** | Audio I/O | Cross-platform low-level audio capture and playback; used by rodio internally |
-| **`rodio`** | Audio playback | High-level audio sink for TTS output; handles WAV/PCM streaming |
-| **`tauri`** v2 | App framework | Rust + web frontend; native macOS features via plugins |
-| **`tauri-plugin-global-shortcut`** | Global hotkeys | Register system-wide keyboard shortcuts for dictation/reading |
-| **`tauri-plugin-macos-permissions`** | macOS perms | Check/request Accessibility, Microphone, Screen Recording permissions |
-| **`macos-accessibility-client`** | Screen text | Read selected text from any app via AXUIElement API |
-| **`hound`** | WAV encoding | Write audio buffers to WAV format for whisper-rs input |
-| **`reqwest`** | Model downloads | Download models from HuggingFace with progress tracking |
+| Crate | Purpose | Status | Notes |
+|-------|---------|--------|-------|
+| **`whisper-rs`** | STT inference | ✅ Integrated | Rust bindings for whisper.cpp; CoreML + Metal acceleration on Apple Silicon |
+| **`kokoroxide`** | TTS inference | 🟡 Pending | Pure Rust Kokoro-82M via ONNX Runtime; placeholder tone implemented |
+| **`cpal`** | Audio I/O | ✅ Integrated | Cross-platform low-level audio capture at 16kHz mono |
+| **`rodio`** | Audio playback | ✅ Integrated | High-level audio sink for TTS output |
+| **`tauri`** v2 | App framework | ✅ Integrated | Rust + web frontend; tray icon, window management |
+| **`tauri-plugin-global-shortcut`** | Global hotkeys | ✅ Integrated | Hold-to-record for STT, single press for TTS |
+| **`tauri-plugin-shell`** | Shell access | ✅ Integrated | Used for AppleScript execution |
+| **`hound`** | WAV encoding | ✅ Integrated | Write audio buffers to WAV format |
+| **`reqwest`** | Model downloads | ✅ Integrated | Download models from HuggingFace with progress tracking |
+| **`sysinfo`** | Hardware detection | ✅ Integrated | Detect RAM, CPU cores, chip type for model recommendations |
 
 ---
 
@@ -210,51 +233,41 @@ async fn speak_text(
 
 This is the glue that makes screen reading work system-wide.
 
-```rust
-use core_foundation::string::CFString;
-use core_foundation::base::TCFType;
+**Current Implementation**: Uses AppleScript to simulate ⌘+C and read from clipboard. This is more compatible across apps but temporarily modifies the clipboard (restored after 500ms).
 
-/// Get the currently selected text from the focused application
-fn get_selected_text() -> Option<String> {
-    unsafe {
-        // Get the focused application
-        let system_element = AXUIElementCreateSystemWide();
-        
-        // Get focused app
-        let mut focused_app: CFTypeRef = std::ptr::null();
-        AXUIElementCopyAttributeValue(
-            system_element,
-            CFString::new("AXFocusedApplication").as_concrete_TypeRef(),
-            &mut focused_app,
-        );
-        
-        // Get focused element within app
-        let mut focused_element: CFTypeRef = std::ptr::null();
-        AXUIElementCopyAttributeValue(
-            focused_app as AXUIElementRef,
-            CFString::new("AXFocusedUIElement").as_concrete_TypeRef(),
-            &mut focused_element,
-        );
-        
-        // Get selected text
-        let mut selected_text: CFTypeRef = std::ptr::null();
-        let result = AXUIElementCopyAttributeValue(
-            focused_element as AXUIElementRef,
-            CFString::new("AXSelectedText").as_concrete_TypeRef(),
-            &mut selected_text,
-        );
-        
-        if result == kAXErrorSuccess {
-            let cf_string = CFString::wrap_under_get_rule(selected_text as CFStringRef);
-            Some(cf_string.to_string())
-        } else {
-            None
-        }
+```rust
+/// Get the currently selected text from the frontmost application.
+/// Uses AppleScript as a reliable cross-app method.
+pub fn get_selected_text() -> Option<String> {
+    let script = r#"
+        tell application "System Events"
+            keystroke "c" using {command down}
+        end tell
+        delay 0.1
+        the clipboard
+    "#;
+
+    // Save current clipboard, run script, restore clipboard
+    let old_clipboard = get_clipboard();
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        // Restore clipboard in background thread
+        // ...
+        return Some(text);
     }
+    None
 }
 ```
 
-**Requires**: Accessibility permission (prompted via `tauri-plugin-macos-permissions`)
+**Future Enhancement**: Direct AXUIElement API access via `macos-accessibility-client` crate for better performance and no clipboard interference.
+
+**Requires**: Accessibility permission (user must grant in System Settings → Privacy & Security → Accessibility)
 
 ---
 
@@ -364,7 +377,7 @@ blah3/
 
 ---
 
-## Cargo.toml (Key Dependencies)
+## Cargo.toml (Current Dependencies)
 
 ```toml
 [package]
@@ -377,10 +390,13 @@ default = ["apple-silicon"]
 apple-silicon = ["whisper-rs/coreml", "whisper-rs/metal"]
 intel = []  # CPU-only path, no CoreML/Metal
 
+[lib]
+name = "blah3_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2"
-tauri-plugin-macos-permissions = "2"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -389,31 +405,32 @@ tokio = { version = "1", features = ["full"] }
 # STT
 whisper-rs = "0.13"  # CoreML/Metal enabled via features above
 
-# TTS (primary)
-kokoroxide = "0.3"
+# TTS (pending integration)
+# kokoroxide = "0.3"  # Uncomment when ready to integrate
 
 # Audio
 cpal = "0.15"
-rodio = "0.19"
+rodio = { version = "0.19", default-features = false, features = ["wav"] }
 hound = "3.5"
 
 # macOS native
 core-foundation = "0.10"
-core-graphics = "0.24"
-objc2 = "0.5"
-objc2-app-kit = "0.2"
 
 # Utilities
 reqwest = { version = "0.12", features = ["stream"] }
 dirs = "5"
 anyhow = "1"
+thiserror = "1"
 tracing = "0.1"
-tracing-subscriber = "0.3"
-sysinfo = "0.31"  # Hardware detection (RAM, CPU cores, chip type)
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sysinfo = "0.31"
+futures-util = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-macos-accessibility-client = "0.0.1"
+# macos-accessibility-client = "0.0.1"  # Uncomment when ready
 ```
+
+> **Note**: The current implementation uses AppleScript for getting selected text rather than the AXUIElement API directly. The `kokoroxide` and `macos-accessibility-client` crates are commented out pending integration.
 
 ---
 
@@ -647,15 +664,23 @@ cargo install tauri-cli --version "^2"
 
 ```bash
 # Clone and install
-git clone https://github.com/your-user/blah3.git
+git clone https://github.com/Anomali007/blah3.git
 cd blah3
-npm install
+pnpm install
 
 # Dev mode (hot reload frontend + Rust rebuild)
 cargo tauri dev
 
 # Production build
 cargo tauri build
+
+# Run tests
+pnpm test:run           # Frontend (Vitest)
+cd src-tauri && cargo test  # Backend
+
+# Lint
+pnpm lint               # TypeScript type checking
+cd src-tauri && cargo clippy -- -D warnings
 ```
 
 ### Build Notes
@@ -668,40 +693,40 @@ cargo tauri build
 
 ## Phased Development Plan
 
-### Phase 1: Foundation (Week 1-2)
-- [ ] Scaffold Tauri v2 project with React frontend
-- [ ] Implement macOS permissions flow (mic + accessibility)
-- [ ] Build model downloader with progress UI
-- [ ] Set up audio capture pipeline (cpal, 16kHz mono)
-- [ ] Integrate whisper-rs for basic transcription
-- [ ] Global hotkey registration for dictation
+### Phase 1: Foundation ✅
+- [x] Scaffold Tauri v2 project with React frontend
+- [ ] Implement macOS permissions flow (mic + accessibility) — *using system prompts for now*
+- [x] Build model downloader with progress UI
+- [x] Set up audio capture pipeline (cpal, 16kHz mono)
+- [x] Integrate whisper-rs for basic transcription
+- [x] Global hotkey registration for dictation
 
-### Phase 2: STT Polish (Week 3)
-- [ ] Hold-to-record hotkey behavior
-- [ ] Floating recording overlay with waveform
-- [ ] Auto-paste transcription into active app
+### Phase 2: STT Polish 🟡
+- [x] Hold-to-record hotkey behavior
+- [x] Floating recording overlay with waveform — *basic implementation*
+- [x] Auto-paste transcription into active app — *via clipboard + Cmd+V*
 - [ ] Silence detection for auto-stop
-- [ ] CoreML model support for speed boost
+- [ ] CoreML model support for speed boost — *feature flags ready, models not tested*
 
-### Phase 3: TTS Integration (Week 4)
-- [ ] Integrate kokoroxide for speech synthesis
-- [ ] Read selected text via Accessibility API
+### Phase 3: TTS Integration 🟡
+- [ ] Integrate kokoroxide for speech synthesis — *placeholder with test tone*
+- [x] Read selected text via Accessibility API — *AppleScript/clipboard method*
 - [ ] Streaming playback (chunk + overlap)
-- [ ] Voice selection UI with preview
+- [x] Voice selection UI with preview — *UI ready, awaiting TTS engine*
 - [ ] Floating player with pause/stop/speed controls
 
-### Phase 4: Model Manager & Settings (Week 5)
-- [ ] Model catalog with download/delete
-- [ ] Persistent settings (JSON in app support dir)
-- [ ] Menu bar / tray icon mode
+### Phase 4: Model Manager & Settings ✅
+- [x] Model catalog with download/delete
+- [x] Persistent settings (JSON in app support dir)
+- [x] Menu bar / tray icon mode — *tray icon works, dock icon still shows*
 - [ ] Launch at login option
-- [ ] Keyboard shortcut customization
+- [x] Keyboard shortcut customization — *configurable in settings*
 
-### Phase 5: Polish & Ship (Week 6)
+### Phase 5: Polish & Ship
 - [ ] First-run onboarding flow
-- [ ] Error handling & edge cases
+- [ ] Error handling & edge cases — *basic error handling in place*
 - [ ] DMG packaging with notarization
-- [ ] README, screenshots, demo GIF
+- [x] README, screenshots, demo GIF — *README complete*
 - [ ] GitHub release
 
 ---
