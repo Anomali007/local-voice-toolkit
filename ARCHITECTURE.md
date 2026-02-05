@@ -429,8 +429,9 @@ blah3/
 │   │   ├── DictationPanel.tsx    # STT recording UI
 │   │   ├── ScreenReader.tsx      # TTS playback controls
 │   │   ├── ModelManager.tsx      # Download/manage models
-│   │   ├── SettingsPanel.tsx     # Configuration
-│   │   ├── FloatingOverlay.tsx   # Minimal recording/playback overlay
+│   │   ├── SettingsPanel.tsx     # Configuration + silence detection + autostart
+│   │   ├── FloatingOverlay.tsx   # Compact pill overlay with timer, audio levels, stop
+│   │   ├── StatusIndicator.tsx   # Global status + toast notifications
 │   │   ├── VoicePreview.tsx      # Preview TTS voices
 │   │   └── WaveformViz.tsx       # Audio waveform visualization
 │   ├── hooks/
@@ -469,6 +470,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-autostart = "2"  # Launch at login via LaunchAgent
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
