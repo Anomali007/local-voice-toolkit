@@ -31,7 +31,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 | **Selected Text** | ✅ Working | AppleScript clipboard method |
 | **Auto-paste** | ✅ Working | Clipboard + simulated ⌘+V |
 | **CoreML Acceleration** | 🟡 Untested | Feature flags enabled, needs model testing |
-| **Floating Overlay** | 🟡 Basic | Component exists, needs polish |
+| **Floating Overlay** | ✅ Polished | Compact pill with elapsed time, audio levels, stop button |
 | **Silence Detection** | ✅ Working | Auto-stop after configurable silence duration |
 | **Launch at Login** | ✅ Working | Via tauri-plugin-autostart (LaunchAgent) |
 | **First-run Onboarding** | ❌ Not started | |
