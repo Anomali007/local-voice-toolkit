@@ -2,11 +2,37 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Privacy descriptions -->
     <key>NSMicrophoneUsageDescription</key>
     <string>Blah³ needs microphone access for speech-to-text dictation.</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>Blah³ needs accessibility access to read selected text for text-to-speech and to paste transcriptions.</string>
+
+    <!-- Run as menu bar app (no dock icon) -->
     <key>LSUIElement</key>
     <true/>
+
+    <!-- App metadata -->
+    <key>CFBundleDisplayName</key>
+    <string>Blah³</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2024-2025 Blah³. All rights reserved.</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+
+    <!-- Supported architectures -->
+    <key>LSArchitecturePriority</key>
+    <array>
+        <string>arm64</string>
+        <string>x86_64</string>
+    </array>
+
+    <!-- High resolution support -->
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!-- Allow Apple Events for accessibility -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Blah³ uses Apple Events to copy selected text for text-to-speech.</string>
 </dict>
 </plist>

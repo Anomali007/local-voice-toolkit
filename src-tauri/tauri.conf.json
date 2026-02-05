@@ -33,7 +33,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["dmg", "app"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,9 +41,18 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "category": "public.app-category.productivity",
+    "shortDescription": "Local Voice Toolkit - Speech-to-Text & Text-to-Speech",
+    "longDescription": "Blah³ is a privacy-focused voice toolkit for macOS. Dictate text with Whisper AI and read content aloud with Kokoro TTS - all running 100% offline on your Mac.",
     "macOS": {
       "minimumSystemVersion": "14.0",
-      "entitlements": null
+      "entitlements": "entitlements.plist",
+      "exceptionDomain": null,
+      "dmg": {
+        "appPosition": { "x": 180, "y": 170 },
+        "applicationFolderPosition": { "x": 480, "y": 170 },
+        "windowSize": { "width": 660, "height": 400 }
+      }
     }
   },
   "plugins": {

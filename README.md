@@ -32,6 +32,24 @@ Local Voice Toolkit for macOS — Speech-to-Text and Text-to-Speech with AI mode
 - Apple Silicon (M1/M2/M3) recommended
 - 16GB+ RAM recommended
 
+## Installation
+
+### Download DMG (Recommended)
+
+1. Download the latest `.dmg` from [Releases](https://github.com/Anomali007/blah3/releases)
+2. Open the DMG and drag **Blah³** to your Applications folder
+3. **First launch**: Right-click the app → select **Open** (bypasses Gatekeeper for unsigned apps)
+4. Grant permissions when prompted:
+   - **Microphone**: Required for speech-to-text
+   - **Accessibility**: Required for reading selected text and auto-paste
+5. Download AI models from the **Models** tab
+
+> **Note**: This app is unsigned. On first launch, macOS will show a security warning. Right-click → Open to bypass, or run: `xattr -cr /Applications/Blah³.app`
+
+### Build from Source
+
+See [Development](#development) section below.
+
 ## Development
 
 ### Prerequisites
@@ -73,6 +91,18 @@ cargo tauri dev
 
 # Production build
 cargo tauri build
+```
+
+#### Building the DMG
+
+```bash
+# Build DMG for distribution
+./scripts/build-dmg.sh
+
+# Or manually:
+cargo tauri build --target aarch64-apple-darwin
+
+# DMG will be in: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/
 ```
 
 #### Using npm
