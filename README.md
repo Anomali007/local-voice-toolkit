@@ -2,6 +2,8 @@
 
 Local Voice Toolkit for macOS — Speech-to-Text and Text-to-Speech with AI models running 100% offline on Apple Silicon.
 
+**Website:** [https://blah3-website.vercel.app](https://blah3-website.vercel.app)
+
 <p align="center">
   <img src="docs/assets/hero-screenshot.png" alt="Blah³ App Screenshot" width="400">
 </p>
