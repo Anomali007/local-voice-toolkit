@@ -30,7 +30,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 | **System Tray** | ✅ Working | Show/Quit menu |
 | **Selected Text** | ✅ Working | AppleScript clipboard method |
 | **Auto-paste** | ✅ Working | Clipboard + simulated ⌘+V |
-| **CoreML Acceleration** | 🟡 Untested | Feature flags enabled, needs model testing |
+| **CoreML Acceleration** | ✅ Implemented | CoreML encoder models downloadable via Model Manager |
 | **Floating Overlay** | ✅ Polished | Compact pill with elapsed time, audio levels, stop button |
 | **Silence Detection** | ✅ Working | Auto-stop after configurable silence duration |
 | **Launch at Login** | ✅ Working | Via tauri-plugin-autostart (LaunchAgent) |
@@ -346,13 +346,19 @@ pub fn get_selected_text() -> Option<String> {
 ```
 models/
 ├── stt/
-│   ├── ggml-base.en.bin          (142 MB)
-│   ├── ggml-small.en.bin         (488 MB)
-│   └── ggml-base.en-coreml.mlmodelc/  (CoreML version)
+│   ├── ggml-tiny.en.bin              (39 MB)
+│   ├── ggml-base.en.bin              (142 MB)
+│   ├── ggml-small.en.bin             (488 MB)
+│   ├── ggml-medium.en.bin            (1.5 GB)
+│   ├── ggml-tiny.en-encoder.mlmodelc/    (26 MB, CoreML Neural Engine)
+│   ├── ggml-base.en-encoder.mlmodelc/    (38 MB, CoreML Neural Engine)
+│   └── ggml-small.en-encoder.mlmodelc/   (130 MB, CoreML Neural Engine)
 └── tts/
     ├── kokoro-v1.0.onnx          (330 MB)
     └── voices-v1.0.bin           (5 MB)
 ```
+
+> **CoreML Note**: CoreML encoder models enable Neural Engine acceleration on Apple Silicon. Download the encoder matching your Whisper model for best performance. Models are distributed as `.zip` files and automatically extracted.
 
 > **Note**: kokoro-tiny uses espeak-rs for phonemization, so no tokenizer.json is needed.
 
@@ -492,6 +498,7 @@ core-foundation = "0.10"
 
 # Utilities
 reqwest = { version = "0.12", features = ["stream"] }
+zip = "0.6"  # Extract CoreML model bundles
 dirs = "5"
 anyhow = "1"
 thiserror = "1"
@@ -781,7 +788,7 @@ cd src-tauri && cargo clippy -- -D warnings
 - [x] Floating recording overlay with waveform — *basic implementation*
 - [x] Auto-paste transcription into active app — *via clipboard + Cmd+V*
 - [x] Silence detection for auto-stop — *RMS-based, configurable threshold/duration*
-- [ ] CoreML model support for speed boost — *feature flags ready, models not tested*
+- [x] CoreML model support for speed boost — *downloadable via Model Manager, auto-detected by whisper.cpp*
 
 ### Phase 3: TTS Integration ✅
 - [x] Integrate kokoro-tiny for speech synthesis — *working with 11 voices*
