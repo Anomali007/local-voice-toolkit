@@ -808,7 +808,8 @@ cd src-tauri && cargo clippy -- -D warnings
 ### Phase 5: Polish & Ship
 - [x] First-run onboarding flow — *5-step wizard with permissions, model download, hotkeys*
 - [ ] Error handling & edge cases — *basic error handling in place*
-- [ ] DMG packaging with notarization
+- [x] DMG packaging — *12 MB unsigned DMG, 25 MB app bundle*
+- [ ] Code signing & notarization — *requires Apple Developer account*
 - [x] README, screenshots, demo GIF — *README complete*
 - [ ] GitHub release
 
