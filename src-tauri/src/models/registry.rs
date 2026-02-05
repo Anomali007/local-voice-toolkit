@@ -135,3 +135,146 @@ impl Default for ModelRegistry {
         Self::new()
     }
 }
+
+/// Get CoreML encoder models only
+impl ModelRegistry {
+    pub fn get_coreml_models(&self) -> Vec<ModelInfo> {
+        self.models
+            .iter()
+            .filter(|m| m.id.ends_with(".mlmodelc"))
+            .cloned()
+            .collect()
+    }
+
+    /// Get the base whisper models (non-CoreML)
+    pub fn get_whisper_models(&self) -> Vec<ModelInfo> {
+        self.models
+            .iter()
+            .filter(|m| m.model_type == ModelType::Stt && m.id.ends_with(".bin"))
+            .cloned()
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_registry_has_models() {
+        let registry = ModelRegistry::new();
+        let models = registry.get_all_models();
+        assert!(!models.is_empty());
+    }
+
+    #[test]
+    fn test_registry_has_coreml_models() {
+        let registry = ModelRegistry::new();
+        let coreml = registry.get_coreml_models();
+
+        // We should have 3 CoreML models: tiny, base, small
+        assert_eq!(coreml.len(), 3);
+
+        // All should be STT type
+        for model in &coreml {
+            assert_eq!(model.model_type, ModelType::Stt);
+        }
+
+        // All should have .mlmodelc suffix
+        for model in &coreml {
+            assert!(model.id.ends_with(".mlmodelc"));
+        }
+    }
+
+    #[test]
+    fn test_coreml_models_have_zip_urls() {
+        let registry = ModelRegistry::new();
+        let coreml = registry.get_coreml_models();
+
+        for model in &coreml {
+            assert!(
+                model.download_url.ends_with(".zip"),
+                "CoreML model {} should have .zip download URL",
+                model.id
+            );
+        }
+    }
+
+    #[test]
+    fn test_each_whisper_model_has_coreml_encoder() {
+        let registry = ModelRegistry::new();
+        let whisper_models = registry.get_whisper_models();
+        let coreml_models = registry.get_coreml_models();
+
+        // tiny, base, small should have CoreML versions
+        // (medium doesn't have a CoreML version in our registry)
+        let expected_coreml = ["tiny", "base", "small"];
+
+        for expected in expected_coreml {
+            let coreml_id = format!("ggml-{}.en-encoder.mlmodelc", expected);
+            let found = coreml_models.iter().any(|m| m.id == coreml_id);
+            assert!(found, "Expected CoreML model {} not found", coreml_id);
+
+            // Verify corresponding base model exists
+            let base_id = format!("ggml-{}.en.bin", expected);
+            let base_found = whisper_models.iter().any(|m| m.id == base_id);
+            assert!(base_found, "Expected base model {} not found", base_id);
+        }
+    }
+
+    #[test]
+    fn test_get_model_by_id() {
+        let registry = ModelRegistry::new();
+
+        // Test getting a base model
+        let base = registry.get_model("ggml-base.en.bin");
+        assert!(base.is_some());
+        assert_eq!(base.unwrap().name, "Whisper Base (English)");
+
+        // Test getting a CoreML model
+        let coreml = registry.get_model("ggml-base.en-encoder.mlmodelc");
+        assert!(coreml.is_some());
+        assert_eq!(coreml.unwrap().name, "CoreML Base Encoder");
+
+        // Test getting a nonexistent model
+        let none = registry.get_model("nonexistent-model");
+        assert!(none.is_none());
+    }
+
+    #[test]
+    fn test_stt_models_count() {
+        let registry = ModelRegistry::new();
+        let stt = registry.get_stt_models();
+
+        // 4 base whisper models + 3 CoreML encoders = 7
+        assert_eq!(stt.len(), 7);
+    }
+
+    #[test]
+    fn test_tts_models_count() {
+        let registry = ModelRegistry::new();
+        let tts = registry.get_tts_models();
+
+        // kokoro model + voices = 2
+        assert_eq!(tts.len(), 2);
+    }
+
+    #[test]
+    fn test_all_models_have_valid_urls() {
+        let registry = ModelRegistry::new();
+        let models = registry.get_all_models();
+
+        for model in &models {
+            assert!(
+                model.download_url.starts_with("https://"),
+                "Model {} should have HTTPS URL",
+                model.id
+            );
+            assert!(
+                model.download_url.contains("huggingface.co"),
+                "Model {} should be hosted on HuggingFace",
+                model.id
+            );
+        }
+    }
+}

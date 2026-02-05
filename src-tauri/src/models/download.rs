@@ -157,3 +157,109 @@ pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
     tracing::info!("Extraction complete: {:?}", dest_dir);
     Ok(())
 }
+
+/// Check if a model ID represents a CoreML model
+pub fn is_coreml_model(model_id: &str) -> bool {
+    model_id.ends_with(".mlmodelc")
+}
+
+/// Check if a URL points to a zip file
+pub fn is_zip_url(url: &str) -> bool {
+    url.ends_with(".zip")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_is_coreml_model() {
+        assert!(is_coreml_model("ggml-base.en-encoder.mlmodelc"));
+        assert!(is_coreml_model("ggml-tiny.en-encoder.mlmodelc"));
+        assert!(!is_coreml_model("ggml-base.en.bin"));
+        assert!(!is_coreml_model("kokoro-v1.0.onnx"));
+    }
+
+    #[test]
+    fn test_is_zip_url() {
+        assert!(is_zip_url("https://example.com/model.mlmodelc.zip"));
+        assert!(is_zip_url("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-encoder.mlmodelc.zip"));
+        assert!(!is_zip_url("https://example.com/model.bin"));
+        assert!(!is_zip_url("https://example.com/model.onnx"));
+    }
+
+    #[test]
+    fn test_extract_zip_creates_destination() {
+        let temp_dir = TempDir::new().unwrap();
+        let zip_path = temp_dir.path().join("test.zip");
+        let dest_dir = temp_dir.path().join("extracted");
+
+        // Create a simple zip file with a nested structure
+        {
+            let file = std::fs::File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+
+            // Add a directory entry (simulating top-level .mlmodelc dir)
+            let options =
+                zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+            zip.add_directory("test.mlmodelc/", options).unwrap();
+
+            // Add a file inside the directory
+            zip.start_file("test.mlmodelc/model.json", options).unwrap();
+            zip.write_all(b"{\"test\": true}").unwrap();
+
+            // Add a subdirectory with a file
+            zip.add_directory("test.mlmodelc/subdir/", options).unwrap();
+            zip.start_file("test.mlmodelc/subdir/data.bin", options)
+                .unwrap();
+            zip.write_all(b"binary data").unwrap();
+
+            zip.finish().unwrap();
+        }
+
+        // Extract the zip
+        extract_zip(&zip_path, &dest_dir).unwrap();
+
+        // Verify the destination was created
+        assert!(dest_dir.exists());
+
+        // Verify the files were extracted (top-level dir stripped)
+        assert!(dest_dir.join("model.json").exists());
+        assert!(dest_dir.join("subdir").exists());
+        assert!(dest_dir.join("subdir/data.bin").exists());
+
+        // Verify file contents
+        let content = std::fs::read_to_string(dest_dir.join("model.json")).unwrap();
+        assert_eq!(content, "{\"test\": true}");
+    }
+
+    #[test]
+    fn test_extract_zip_nonexistent_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = extract_zip(
+            &temp_dir.path().join("nonexistent.zip"),
+            &temp_dir.path().join("dest"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_download_progress_percentage() {
+        let progress = DownloadProgress {
+            downloaded: 50,
+            total: 100,
+            percentage: 50,
+        };
+        assert_eq!(progress.percentage, 50);
+
+        let progress_complete = DownloadProgress {
+            downloaded: 100,
+            total: 100,
+            percentage: 100,
+        };
+        assert_eq!(progress_complete.percentage, 100);
+    }
+}
