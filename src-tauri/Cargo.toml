@@ -1,0 +1,59 @@
+[package]
+name = "blah3"
+version = "0.1.0"
+description = "Local Voice Toolkit for macOS - STT & TTS with AI models"
+authors = ["you"]
+edition = "2021"
+
+[features]
+default = ["apple-silicon"]
+apple-silicon = ["whisper-rs/coreml", "whisper-rs/metal"]
+intel = []
+
+[lib]
+name = "blah3_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+
+# STT
+whisper-rs = "0.13"
+
+# TTS
+# kokoroxide = "0.3"  # Uncomment when ready to integrate
+
+# Audio
+cpal = "0.15"
+rodio = { version = "0.19", default-features = false, features = ["wav"] }
+hound = "3.5"
+
+# macOS native
+core-foundation = "0.10"
+
+# Utilities
+reqwest = { version = "0.12", features = ["stream"] }
+dirs = "5"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sysinfo = "0.31"
+futures-util = "0.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macos-accessibility-client = "0.0.1"  # Uncomment when ready
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
