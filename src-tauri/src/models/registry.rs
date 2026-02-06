@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::commands::models::{ModelInfo, ModelStatus, ModelType};
 
 pub struct ModelRegistry {
