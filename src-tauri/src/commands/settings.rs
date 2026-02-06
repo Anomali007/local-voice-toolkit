@@ -61,25 +61,37 @@ pub fn get_settings() -> Result<AppSettings, String> {
     let settings_path = get_settings_path();
 
     if settings_path.exists() {
-        let content = std::fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&content).map_err(|e| e.to_string())
+        let content = std::fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Failed to read settings file: {}", e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse settings file: {}", e))
     } else {
         Ok(AppSettings::default())
     }
 }
 
 #[tauri::command]
-pub fn update_settings(settings: AppSettings) -> Result<(), String> {
+pub fn update_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), String> {
     let settings_path = get_settings_path();
 
     if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create settings directory: {}", e))?;
     }
 
-    let content = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    std::fs::write(&settings_path, content).map_err(|e| e.to_string())?;
+    let content = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+    std::fs::write(&settings_path, content)
+        .map_err(|e| format!("Failed to write settings file: {}", e))?;
 
     tracing::info!("Settings updated");
+
+    // Re-register hotkeys with new settings (don't fail if this errors)
+    if let Err(e) = crate::hotkeys::refresh_hotkeys(&app) {
+        tracing::error!("Failed to refresh hotkeys: {}", e);
+        // Don't return error - settings were saved successfully
+    }
+
     Ok(())
 }
 
