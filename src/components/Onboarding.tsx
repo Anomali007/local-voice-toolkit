@@ -104,8 +104,27 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     }
   };
 
-  const openSystemPreferences = (pane: string) => {
-    open(`x-apple.systempreferences:com.apple.preference.security?${pane}`);
+  const openSystemPreferences = async (pane: string) => {
+    // macOS Sonoma (14+) uses different URL scheme
+    // Use the shell open command for reliability
+    try {
+      if (pane === "Privacy_Microphone") {
+        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+      } else if (pane === "Privacy_Accessibility") {
+        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+      }
+    } catch {
+      // Fallback: try opening System Settings directly
+      try {
+        if (pane === "Privacy_Microphone") {
+          await open("x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension-point?Microphone");
+        } else if (pane === "Privacy_Accessibility") {
+          await open("x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension-point?Accessibility");
+        }
+      } catch (e) {
+        console.error("Failed to open system preferences:", e);
+      }
+    }
   };
 
   const nextStep = () => {
@@ -125,7 +144,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900 z-50 flex items-center justify-center p-6">
+    <div className="fixed inset-0 bg-slate-900 z-50 flex items-center justify-center p-8">
       <div className="w-full max-w-lg">
         {/* Progress dots */}
         <div className="flex justify-center gap-2 mb-8">
