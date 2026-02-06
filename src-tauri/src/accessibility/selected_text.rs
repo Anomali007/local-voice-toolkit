@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::process::Command;
 
 /// Get the currently selected text from the frontmost application.

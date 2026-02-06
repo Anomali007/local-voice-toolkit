@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::process::Command;
 
 /// Paste text at the current cursor position.
