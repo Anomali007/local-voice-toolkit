@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
+import { open } from "@tauri-apps/plugin-shell";
+import HotkeyRecorder from "./HotkeyRecorder";
 
 interface Settings {
   stt_hotkey: string;
@@ -94,6 +96,27 @@ export default function SettingsPanel() {
     }
   };
 
+  const openSystemPreferences = async (pane: string) => {
+    try {
+      if (pane === "Privacy_Microphone") {
+        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+      } else if (pane === "Privacy_Accessibility") {
+        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+      }
+    } catch {
+      // Fallback for macOS Sonoma+
+      try {
+        if (pane === "Privacy_Microphone") {
+          await open("x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension-point?Microphone");
+        } else if (pane === "Privacy_Accessibility") {
+          await open("x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension-point?Accessibility");
+        }
+      } catch (e) {
+        console.error("Failed to open system preferences:", e);
+      }
+    }
+  };
+
   // Special handler for launch at login - calls the autostart API
   const updateLaunchAtLogin = async (enabled: boolean) => {
     if (!settings) return;
@@ -162,24 +185,45 @@ export default function SettingsPanel() {
         </section>
       )}
 
+      {/* Permissions */}
+      <section>
+        <h2 className="text-lg font-semibold text-slate-200 mb-3">Permissions</h2>
+        <p className="text-xs text-slate-400 mb-3">
+          Blah³ requires these permissions to function properly.
+        </p>
+        <div className="space-y-3">
+          <PermissionRow
+            icon="🎤"
+            title="Microphone Access"
+            description="Required for speech-to-text dictation"
+            onOpen={() => openSystemPreferences("Privacy_Microphone")}
+          />
+          <PermissionRow
+            icon="♿"
+            title="Accessibility Access"
+            description="Required to read selected text and paste transcriptions"
+            onOpen={() => openSystemPreferences("Privacy_Accessibility")}
+          />
+        </div>
+        <p className="text-xs text-slate-500 mt-3">
+          After changing permissions, you may need to restart Blah³.
+        </p>
+      </section>
+
       {/* Hotkeys */}
       <section>
         <h2 className="text-lg font-semibold text-slate-200 mb-3">Keyboard Shortcuts</h2>
         <div className="space-y-3">
           <SettingRow label="Dictation Hotkey">
-            <input
-              type="text"
+            <HotkeyRecorder
               value={settings.stt_hotkey}
-              onChange={(e) => updateSetting("stt_hotkey", e.target.value)}
-              className="px-3 py-2 bg-slate-800 border border-slate-700 rounded text-slate-100 text-sm w-48"
+              onChange={(value) => updateSetting("stt_hotkey", value)}
             />
           </SettingRow>
           <SettingRow label="Read Aloud Hotkey">
-            <input
-              type="text"
+            <HotkeyRecorder
               value={settings.tts_hotkey}
-              onChange={(e) => updateSetting("tts_hotkey", e.target.value)}
-              className="px-3 py-2 bg-slate-800 border border-slate-700 rounded text-slate-100 text-sm w-48"
+              onChange={(value) => updateSetting("tts_hotkey", value)}
             />
           </SettingRow>
         </div>
@@ -297,5 +341,35 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
         }`}
       />
     </button>
+  );
+}
+
+function PermissionRow({
+  icon,
+  title,
+  description,
+  onOpen,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  onOpen: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between bg-slate-800 rounded-lg p-3">
+      <div className="flex items-center gap-3">
+        <span className="text-xl">{icon}</span>
+        <div>
+          <p className="text-sm text-slate-200">{title}</p>
+          <p className="text-xs text-slate-400">{description}</p>
+        </div>
+      </div>
+      <button
+        onClick={onOpen}
+        className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
+      >
+        Open Settings
+      </button>
+    </div>
   );
 }
