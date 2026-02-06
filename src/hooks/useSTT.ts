@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { appDataDir, join } from "@tauri-apps/api/path";
 
 interface TranscriptionResult {
   text: string;
@@ -140,7 +141,8 @@ export function useSTT() {
 
       // Get settings for model path
       const settings = await invoke<{ stt_model: string }>("get_settings");
-      const modelPath = `${getModelsDir()}/stt/${settings.stt_model}`;
+      const modelsDir = await getModelsDir();
+      const modelPath = await join(modelsDir, "stt", settings.stt_model);
 
       const transcription = await invoke<TranscriptionResult>("transcribe_audio", {
         audioData: result.audio_data,
@@ -174,8 +176,9 @@ export function useSTT() {
   };
 }
 
-function getModelsDir(): string {
-  // This should match the Rust backend's model directory
+async function getModelsDir(): Promise<string> {
+  // Use Tauri's path API to get the correct app data directory
   // On macOS: ~/Library/Application Support/com.blahcubed.app/models
-  return "$HOME/Library/Application Support/com.blahcubed.app/models";
+  const dataDir = await appDataDir();
+  return await join(dataDir, "models");
 }
