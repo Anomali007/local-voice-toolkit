@@ -23,8 +23,21 @@
         "height": 640,
         "resizable": true,
         "decorations": true,
-        "visible": false,
+        "visible": true,
         "center": true
+      },
+      {
+        "label": "dictation-overlay",
+        "url": "overlay.html",
+        "width": 320,
+        "height": 80,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "focus": false
       }
     ],
     "security": {
@@ -54,8 +67,5 @@
         "windowSize": { "width": 660, "height": 400 }
       }
     }
-  },
-  "plugins": {
-    "global-shortcut": {}
   }
 }

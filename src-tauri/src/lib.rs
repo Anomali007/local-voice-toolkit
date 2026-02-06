@@ -4,6 +4,7 @@ mod commands;
 mod engines;
 mod hotkeys;
 mod models;
+mod overlay;
 
 use std::sync::Arc;
 
