@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-shell";
+import { usePermissions } from "../hooks/usePermissions";
 
 type Step = "welcome" | "permissions" | "models" | "hotkeys" | "complete";
 
@@ -242,6 +243,8 @@ function PermissionsStep({
   onBack: () => void;
   openSystemPreferences: (pane: string) => void;
 }) {
+  const permissions = usePermissions();
+
   return (
     <div>
       <h2 className="text-xl font-bold text-white mb-2">Permissions Required</h2>
@@ -255,6 +258,7 @@ function PermissionsStep({
           title="Microphone Access"
           description="Required for speech-to-text dictation"
           buttonText="Open Microphone Settings"
+          granted={permissions?.microphone}
           onClick={() => openSystemPreferences("Privacy_Microphone")}
         />
         <PermissionCard
@@ -262,6 +266,7 @@ function PermissionsStep({
           title="Accessibility Access"
           description="Required to read selected text and paste transcriptions"
           buttonText="Open Accessibility Settings"
+          granted={permissions?.accessibility}
           onClick={() => openSystemPreferences("Privacy_Accessibility")}
         />
       </div>
@@ -293,27 +298,40 @@ function PermissionCard({
   title,
   description,
   buttonText,
+  granted,
   onClick,
 }: {
   icon: string;
   title: string;
   description: string;
   buttonText: string;
+  granted?: boolean;
   onClick: () => void;
 }) {
   return (
-    <div className="bg-slate-700/50 rounded-lg p-4">
+    <div className={`bg-slate-700/50 rounded-lg p-4 border ${
+      granted === true ? "border-green-500/30" : granted === false ? "border-red-500/30" : "border-transparent"
+    }`}>
       <div className="flex items-start gap-3">
         <span className="text-2xl">{icon}</span>
         <div className="flex-1">
-          <h3 className="font-medium text-white">{title}</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="font-medium text-white">{title}</h3>
+            {granted !== undefined && (
+              <span className={`text-xs ${granted ? "text-green-400" : "text-red-400"}`}>
+                {granted ? "Granted" : "Not Granted"}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-400 mt-1">{description}</p>
-          <button
-            onClick={onClick}
-            className="mt-3 px-3 py-1.5 text-xs bg-slate-600 hover:bg-slate-500 text-white rounded transition-colors"
-          >
-            {buttonText}
-          </button>
+          {!granted && (
+            <button
+              onClick={onClick}
+              className="mt-3 px-3 py-1.5 text-xs bg-slate-600 hover:bg-slate-500 text-white rounded transition-colors"
+            >
+              {buttonText}
+            </button>
+          )}
         </div>
       </div>
     </div>

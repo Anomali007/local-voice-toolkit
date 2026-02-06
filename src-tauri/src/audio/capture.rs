@@ -3,7 +3,7 @@
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex,
 };
 use std::thread;
@@ -37,6 +37,7 @@ pub struct AudioCapture {
     buffer: Arc<Mutex<Vec<f32>>>,
     is_recording: Arc<AtomicBool>,
     silence_triggered: Arc<AtomicBool>,
+    current_level: Arc<AtomicU32>,
     sample_rate: u32,
     silence_config: SilenceConfig,
 }
@@ -72,6 +73,7 @@ impl AudioCapture {
             buffer: Arc::new(Mutex::new(Vec::new())),
             is_recording: Arc::new(AtomicBool::new(false)),
             silence_triggered: Arc::new(AtomicBool::new(false)),
+            current_level: Arc::new(AtomicU32::new(0)),
             sample_rate: 16000, // Whisper expects 16kHz
             silence_config,
         })
@@ -95,6 +97,7 @@ impl AudioCapture {
         let buffer = Arc::clone(&self.buffer);
         let is_recording = Arc::clone(&self.is_recording);
         let silence_triggered = Arc::clone(&self.silence_triggered);
+        let current_level = Arc::clone(&self.current_level);
         let sample_rate = self.sample_rate;
         let silence_config = self.silence_config.clone();
 
@@ -105,6 +108,7 @@ impl AudioCapture {
                 buffer,
                 is_recording,
                 silence_triggered,
+                current_level,
                 sample_rate,
                 silence_config,
             );
@@ -119,6 +123,11 @@ impl AudioCapture {
     /// Check if silence detection triggered an auto-stop.
     pub fn is_silence_triggered(&self) -> bool {
         self.silence_triggered.load(Ordering::SeqCst)
+    }
+
+    /// Get the current audio RMS level (0.0 to ~1.0).
+    pub fn current_level(&self) -> f32 {
+        f32::from_bits(self.current_level.load(Ordering::Relaxed))
     }
 
     pub fn stop(self) -> Result<Vec<f32>> {
@@ -144,6 +153,7 @@ fn run_capture_loop(
     buffer: Arc<Mutex<Vec<f32>>>,
     is_recording: Arc<AtomicBool>,
     silence_triggered: Arc<AtomicBool>,
+    current_level: Arc<AtomicU32>,
     sample_rate: u32,
     silence_config: SilenceConfig,
 ) -> Result<()> {
@@ -161,6 +171,7 @@ fn run_capture_loop(
     let buffer_clone = Arc::clone(&buffer);
     let silence_triggered_clone = Arc::clone(&silence_triggered);
     let is_recording_clone = Arc::clone(&is_recording);
+    let current_level_clone = Arc::clone(&current_level);
 
     // Create silence detector if enabled
     let silence_detector = if silence_config.enabled {
@@ -187,6 +198,10 @@ fn run_capture_loop(
                     return;
                 }
             }
+
+            // Compute RMS level for visualization
+            let rms = super::silence::calculate_rms(data);
+            current_level_clone.store(rms.to_bits(), Ordering::Relaxed);
 
             // Process through silence detector
             if let Some(ref detector_mutex) = silence_detector {

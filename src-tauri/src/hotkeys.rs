@@ -126,6 +126,23 @@ fn handle_stt_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutSta
                             }
                             let mut guard = state_clone.audio_capture.lock().await;
                             *guard = Some(capture);
+
+                            // Spawn audio level emission task for overlay visualization
+                            let app_for_levels = app_handle.clone();
+                            let state_for_levels = Arc::clone(&state_clone);
+                            tauri::async_runtime::spawn(async move {
+                                loop {
+                                    if !state_for_levels.is_recording.load(Ordering::SeqCst) {
+                                        break;
+                                    }
+                                    let level = {
+                                        let guard = state_for_levels.audio_capture.lock().await;
+                                        guard.as_ref().map(|c| c.current_level()).unwrap_or(0.0)
+                                    };
+                                    let _ = app_for_levels.emit("stt-audio-level", level);
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                                }
+                            });
                         }
                         Err(e) => {
                             tracing::error!("Failed to create audio capture: {}", e);

@@ -29,8 +29,8 @@
       {
         "label": "dictation-overlay",
         "url": "overlay.html",
-        "width": 320,
-        "height": 80,
+        "width": 400,
+        "height": 200,
         "resizable": false,
         "decorations": false,
         "transparent": true,

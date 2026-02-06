@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import { open } from "@tauri-apps/plugin-shell";
 import HotkeyRecorder from "./HotkeyRecorder";
+import { usePermissions } from "../hooks/usePermissions";
 
 interface Settings {
   stt_hotkey: string;
@@ -35,6 +36,7 @@ export default function SettingsPanel() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
   const [saving, setSaving] = useState(false);
+  const permissions = usePermissions();
 
   useEffect(() => {
     loadSettings();
@@ -196,12 +198,14 @@ export default function SettingsPanel() {
             icon="🎤"
             title="Microphone Access"
             description="Required for speech-to-text dictation"
+            granted={permissions?.microphone}
             onOpen={() => openSystemPreferences("Privacy_Microphone")}
           />
           <PermissionRow
             icon="♿"
             title="Accessibility Access"
             description="Required to read selected text and paste transcriptions"
+            granted={permissions?.accessibility}
             onOpen={() => openSystemPreferences("Privacy_Accessibility")}
           />
         </div>
@@ -348,11 +352,13 @@ function PermissionRow({
   icon,
   title,
   description,
+  granted,
   onOpen,
 }: {
   icon: string;
   title: string;
   description: string;
+  granted?: boolean;
   onOpen: () => void;
 }) {
   return (
@@ -360,7 +366,18 @@ function PermissionRow({
       <div className="flex items-center gap-3">
         <span className="text-xl">{icon}</span>
         <div>
-          <p className="text-sm text-slate-200">{title}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm text-slate-200">{title}</p>
+            {granted !== undefined && (
+              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                granted
+                  ? "bg-green-500/20 text-green-400"
+                  : "bg-red-500/20 text-red-400"
+              }`}>
+                {granted ? "Granted" : "Not Granted"}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-400">{description}</p>
         </div>
       </div>
