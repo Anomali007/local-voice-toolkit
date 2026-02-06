@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{
@@ -82,7 +84,8 @@ impl AudioCapture {
 
         // Clear any previous buffer and reset silence trigger
         {
-            let mut buf = self.buffer.lock().unwrap();
+            let mut buf = self.buffer.lock()
+                .map_err(|e| anyhow!("Failed to acquire audio buffer lock: {}", e))?;
             buf.clear();
         }
         self.silence_triggered.store(false, Ordering::SeqCst);
@@ -124,7 +127,9 @@ impl AudioCapture {
         // Give the capture thread time to finish
         thread::sleep(std::time::Duration::from_millis(100));
 
-        let buffer = self.buffer.lock().unwrap().clone();
+        let buffer = self.buffer.lock()
+            .map_err(|e| anyhow!("Failed to acquire audio buffer lock: {}", e))?
+            .clone();
         tracing::info!("Captured {} samples", buffer.len());
 
         Ok(buffer)
@@ -171,19 +176,31 @@ fn run_capture_loop(
     let stream = device.build_input_stream(
         &config,
         move |data: &[f32], _: &cpal::InputCallbackInfo| {
-            // Store audio data
-            {
-                let mut buf = buffer_clone.lock().unwrap();
-                buf.extend_from_slice(data);
+            // Store audio data - use try_lock to avoid blocking, and handle errors gracefully
+            match buffer_clone.lock() {
+                Ok(mut buf) => {
+                    buf.extend_from_slice(data);
+                }
+                Err(e) => {
+                    // Log once and continue - don't panic in audio callback
+                    tracing::error!("Audio buffer lock poisoned, data lost: {}", e);
+                    return;
+                }
             }
 
             // Process through silence detector
             if let Some(ref detector_mutex) = silence_detector {
-                let mut detector = detector_mutex.lock().unwrap();
-                if detector.process(data) {
-                    // Silence duration exceeded - trigger auto-stop
-                    silence_triggered_clone.store(true, Ordering::SeqCst);
-                    is_recording_clone.store(false, Ordering::SeqCst);
+                match detector_mutex.lock() {
+                    Ok(mut detector) => {
+                        if detector.process(data) {
+                            // Silence duration exceeded - trigger auto-stop
+                            silence_triggered_clone.store(true, Ordering::SeqCst);
+                            is_recording_clone.store(false, Ordering::SeqCst);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Silence detector lock poisoned: {}", e);
+                    }
                 }
             }
         },

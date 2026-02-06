@@ -1,3 +1,9 @@
+//! Audio processing utilities.
+//!
+//! These functions are available for future use in audio manipulation.
+
+#![allow(dead_code)]
+
 use anyhow::Result;
 
 /// Convert audio samples from one sample rate to another

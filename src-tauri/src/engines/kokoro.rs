@@ -1,6 +1,8 @@
+#![allow(dead_code)]
+
 use anyhow::{anyhow, Result};
 use kokoro_tiny::TtsEngine;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{AudioBuffer, ModelInfo, TextToSpeech, VoiceInfo};
 
@@ -172,7 +174,7 @@ pub fn calculate_adjusted_sample_rate(speed: f32) -> u32 {
 }
 
 /// Validate that all required TTS model files exist in the given directory
-pub fn validate_model_files(model_dir: &PathBuf) -> Result<(), Vec<&'static str>> {
+pub fn validate_model_files(model_dir: &Path) -> Result<(), Vec<&'static str>> {
     let mut missing = Vec::new();
 
     if !model_dir.join("kokoro-v1.0.onnx").exists() {

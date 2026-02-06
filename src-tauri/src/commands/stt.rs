@@ -43,18 +43,27 @@ pub async fn start_recording() -> Result<(), String> {
     tracing::info!("Starting audio recording...");
 
     // Load silence detection settings
-    let settings = get_settings().unwrap_or_default();
+    let settings = match get_settings() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("Failed to load settings for recording, using defaults: {}", e);
+            crate::commands::settings::AppSettings::default()
+        }
+    };
     let silence_config = SilenceConfig {
         enabled: settings.silence_detection_enabled,
         threshold: settings.silence_threshold,
         duration_secs: settings.silence_duration,
     };
 
-    let capture = AudioCapture::with_silence_config(silence_config).map_err(|e| e.to_string())?;
-    capture.start().map_err(|e| e.to_string())?;
+    let capture = AudioCapture::with_silence_config(silence_config)
+        .map_err(|e| format!("Failed to initialize audio capture: {}", e))?;
+    capture.start()
+        .map_err(|e| format!("Failed to start microphone recording: {}", e))?;
 
     {
-        let mut capture_guard = state.capture.lock().unwrap();
+        let mut capture_guard = state.capture.lock()
+            .map_err(|e| format!("Internal error: audio state lock poisoned: {}", e))?;
         *capture_guard = Some(capture);
     }
 
@@ -75,10 +84,12 @@ pub async fn stop_recording() -> Result<StopRecordingResult, String> {
     tracing::info!("Stopping audio recording...");
 
     let (audio_data, silence_triggered) = {
-        let mut capture_guard = state.capture.lock().unwrap();
+        let mut capture_guard = state.capture.lock()
+            .map_err(|e| format!("Internal error: audio state lock poisoned: {}", e))?;
         if let Some(capture) = capture_guard.take() {
             let triggered = capture.is_silence_triggered();
-            let data = capture.stop().map_err(|e| e.to_string())?;
+            let data = capture.stop()
+                .map_err(|e| format!("Failed to stop audio capture: {}", e))?;
             (data, triggered)
         } else {
             (Vec::new(), false)
@@ -103,7 +114,13 @@ pub async fn stop_recording() -> Result<StopRecordingResult, String> {
 #[tauri::command]
 pub fn is_silence_triggered() -> bool {
     let state = get_recording_state();
-    let capture_guard = state.capture.lock().unwrap();
+    let capture_guard = match state.capture.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::error!("Failed to acquire audio state lock: {}", e);
+            return false;
+        }
+    };
 
     if let Some(ref capture) = *capture_guard {
         capture.is_silence_triggered()
@@ -132,8 +149,10 @@ pub async fn transcribe_audio(
 
     let start = std::time::Instant::now();
 
-    let engine = WhisperEngine::new(&model_path).map_err(|e| e.to_string())?;
-    let text = engine.transcribe(&audio_data).map_err(|e| e.to_string())?;
+    let engine = WhisperEngine::new(&model_path)
+        .map_err(|e| format!("Failed to load Whisper model '{}': {}", model_path, e))?;
+    let text = engine.transcribe(&audio_data)
+        .map_err(|e| format!("Transcription failed: {}", e))?;
 
     let duration_ms = start.elapsed().as_millis() as u64;
     tracing::info!("Transcription completed in {}ms: {}", duration_ms, text);

@@ -37,9 +37,9 @@ async fn get_or_init_tts_engine() -> Result<(), String> {
         let model_dir = get_models_dir();
         tracing::info!("Initializing TTS engine from: {:?}", model_dir);
 
-        let engine = KokoroEngine::new(model_dir)
+        let engine = KokoroEngine::new(model_dir.clone())
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("Failed to initialize TTS engine from {:?}: {}", model_dir, e))?;
         *guard = Some(engine);
     }
 
@@ -76,20 +76,23 @@ pub async fn speak_text(
 
         engine
             .synthesize(&text, &voice_id, speed)
-            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("Speech synthesis failed for voice '{}': {}", voice_id, e))?
     };
 
-    let player = AudioPlayer::new().map_err(|e| e.to_string())?;
+    let player = AudioPlayer::new()
+        .map_err(|e| format!("Failed to initialize audio player: {}", e))?;
 
     // Store player for potential stop
     {
-        let mut guard = get_player_state().lock().unwrap();
-        *guard = Some(AudioPlayer::new().map_err(|e| e.to_string())?);
+        let mut guard = get_player_state().lock()
+            .map_err(|e| format!("Internal error: audio player state lock poisoned: {}", e))?;
+        *guard = Some(AudioPlayer::new()
+            .map_err(|e| format!("Failed to create backup audio player: {}", e))?);
     }
 
     player
         .play(audio_buffer.samples(), audio_buffer.sample_rate)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Failed to play audio: {}", e))?;
 
     tracing::info!(
         "Started speaking ({:.2}s of audio)",
@@ -102,7 +105,8 @@ pub async fn speak_text(
 pub async fn stop_speaking() -> Result<(), String> {
     tracing::info!("Stopping speech...");
 
-    let mut guard = get_player_state().lock().unwrap();
+    let mut guard = get_player_state().lock()
+        .map_err(|e| format!("Internal error: audio player state lock poisoned: {}", e))?;
     if let Some(player) = guard.take() {
         player.stop();
     }

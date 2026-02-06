@@ -1,7 +1,9 @@
-/// Silence detection for automatic recording stop.
-///
-/// Uses RMS (Root Mean Square) to detect audio levels and track
-/// consecutive silent frames to determine when speech has ended.
+//! Silence detection for automatic recording stop.
+//!
+//! Uses RMS (Root Mean Square) to detect audio levels and track
+//! consecutive silent frames to determine when speech has ended.
+
+#![allow(dead_code)]
 
 /// Default silence threshold in RMS units (0.0 to 1.0)
 /// 0.01 is a reasonable default for typical microphone input

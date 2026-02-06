@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::Result;
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
 use std::sync::{
