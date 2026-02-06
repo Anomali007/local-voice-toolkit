@@ -89,7 +89,7 @@ function App() {
       </nav>
 
       {/* Content */}
-      <main className="p-4">
+      <main className="p-6">
         {activeTab === "dictation" && <DictationPanel />}
         {activeTab === "reader" && <ScreenReader />}
         {activeTab === "models" && <ModelManager />}
