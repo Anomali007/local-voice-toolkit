@@ -251,7 +251,13 @@ fn handle_stt_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutSta
                     let model_path_str = model_path.to_string_lossy();
                     match crate::engines::whisper::WhisperEngine::new(&model_path_str) {
                         Ok(engine) => {
-                            match engine.transcribe(&audio_data) {
+                            let app_for_segments = app_handle.clone();
+                            let mut accumulated_text = String::new();
+                            let on_segment = move |data: whisper_rs::SegmentCallbackData| {
+                                accumulated_text.push_str(&data.text);
+                                let _ = app_for_segments.emit("stt-partial-result", accumulated_text.trim());
+                            };
+                            match engine.transcribe_streaming(&audio_data, on_segment) {
                                 Ok(text) => {
                                     tracing::info!("Transcription: {}", text);
                                     if let Err(e) = app_handle.emit("stt-result", &text) {

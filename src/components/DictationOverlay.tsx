@@ -17,6 +17,7 @@ export default function DictationOverlay() {
   const [targetApp, setTargetApp] = useState<string | null>(null);
   const [result, setResult] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const [partialResult, setPartialResult] = useState<string>("");
   const [elapsedTime, setElapsedTime] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
@@ -33,6 +34,7 @@ export default function DictationOverlay() {
           setState("recording");
           setResult("");
           setError("");
+          setPartialResult("");
           setElapsedTime(0);
           startTimeRef.current = Date.now();
           levelHistoryRef.current = new Array(40).fill(0);
@@ -67,6 +69,12 @@ export default function DictationOverlay() {
         await listen<string>("stt-error", (event) => {
           setState("error");
           setError(event.payload || "Unknown error");
+        })
+      );
+
+      unlisteners.push(
+        await listen<string>("stt-partial-result", (event) => {
+          setPartialResult(event.payload || "");
         })
       );
 
@@ -248,7 +256,7 @@ export default function DictationOverlay() {
                 <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" style={{ animationDelay: "150ms" }} />
                 <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" style={{ animationDelay: "300ms" }} />
               </div>
-              <span className="text-sm text-white/70">Processing audio...</span>
+              <span className="text-sm text-white/70">{partialResult ? "Transcribing..." : "Processing audio..."}</span>
             </div>
           ) : state === "result" ? (
             <div className="flex items-center gap-2">
@@ -273,7 +281,13 @@ export default function DictationOverlay() {
             <p className="text-xs text-white/40 italic">Listening...</p>
           )}
           {state === "transcribing" && (
-            <p className="text-xs text-white/40 italic">Transcribing your speech...</p>
+            partialResult ? (
+              <p className="text-sm text-white/90 leading-snug line-clamp-3 break-words">
+                {partialResult}
+              </p>
+            ) : (
+              <p className="text-xs text-white/40 italic">Transcribing your speech...</p>
+            )
           )}
           {state === "result" && (
             <p className="text-sm text-white/90 leading-snug line-clamp-3 break-words">
