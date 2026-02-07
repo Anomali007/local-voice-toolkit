@@ -20,9 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - React frontend with Tailwind CSS styling
 - Tauri v2 backend with Rust
 - macOS Sonoma (14.0+) support optimized for Apple Silicon
+- Live permission status indicators for Microphone and Accessibility
+- Redesigned dictation overlay (400x200) with real audio waveform, timer, and full transcript
+- Streaming partial transcripts during transcription via whisper-rs segment callbacks
+- `usePermissions` React hook for polling macOS permission status
+- `check_permissions` Tauri command using AXIsProcessTrusted FFI and cpal device detection
 
 ### Changed
-- N/A
+- Dictation overlay enlarged from 320x80 to 400x200 with three-section layout
+- Transcription uses `transcribe_streaming` with segment callbacks instead of batch-only processing
+- Onboarding permission cards show live granted/not-granted status and hide button when granted
+- Settings panel permission rows show green "Granted" or red "Not Granted" badges
 
 ### Deprecated
 - N/A

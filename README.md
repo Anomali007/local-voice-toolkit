@@ -21,8 +21,10 @@ Local Voice Toolkit for macOS — Speech-to-Text and Text-to-Speech with AI mode
 ## Features
 
 - **Dictation Mode**: Press a global hotkey → speak → text appears wherever your cursor is
+- **Streaming Transcripts**: See words appear progressively in the overlay as speech is decoded
 - **Screen Reader**: Select text anywhere → press hotkey → hear it read aloud with AI voice
 - **Model Manager**: Download, switch, and manage STT/TTS models
+- **Live Permission Status**: Real-time indicators for Microphone and Accessibility permissions
 - **100% Offline**: All processing happens locally on your Mac
 
 ## Tech Stack

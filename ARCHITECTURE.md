@@ -31,7 +31,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 | **Selected Text** | ✅ Working | AppleScript clipboard method |
 | **Auto-paste** | ✅ Working | Clipboard + simulated ⌘+V |
 | **CoreML Acceleration** | ✅ Implemented | CoreML encoder models downloadable via Model Manager |
-| **Floating Overlay** | ✅ Polished | Compact pill with elapsed time, audio levels, stop button |
+| **Floating Overlay** | ✅ Polished | Dictation HUD with real waveform, timer, streaming partial transcripts |
 | **Silence Detection** | ✅ Working | Auto-stop after configurable silence duration |
 | **Launch at Login** | ✅ Working | Via tauri-plugin-autostart (LaunchAgent) |
 | **First-run Onboarding** | ✅ Working | 5-step wizard: welcome, permissions, models, hotkeys, complete |
@@ -117,16 +117,19 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 ```
 Global Hotkey Pressed
     → Start mic capture (cpal, 16kHz mono PCM)
-    → Show floating recording overlay (waveform viz)
-    
+    → Show dictation overlay (real-time waveform + timer)
+    → Emit audio level events (50ms interval) for visualization
+
 Hotkey Released OR Silence Detected (auto-stop)
     → Stop capture
-    → Feed PCM buffer to whisper-rs
-    → Get transcription text
+    → Feed PCM buffer to whisper-rs (transcribe_streaming)
+    → Segment callback fires per decoded segment:
+        → Emit partial transcript to overlay (text appears progressively)
+    → Get final transcription text
     → Paste into active app via:
         Option A: macOS pasteboard + Cmd+V simulation
         Option B: CGEventPost for character-by-character typing
-    → Show brief confirmation toast
+    → Show result in overlay, auto-hide after 2 seconds
 ```
 
 **Silence Detection** (auto-stop):
@@ -406,7 +409,8 @@ blah3/
 │   │   │   ├── stt.rs            # Speech-to-text commands
 │   │   │   ├── tts.rs            # Text-to-speech commands
 │   │   │   ├── models.rs         # Model management commands
-│   │   │   └── settings.rs       # Settings CRUD
+│   │   │   ├── settings.rs       # Settings CRUD
+│   │   │   └── permissions.rs    # macOS permission checking (mic + accessibility)
 │   │   ├── audio/
 │   │   │   ├── mod.rs
 │   │   │   ├── capture.rs        # Mic recording (cpal) with silence detection
@@ -436,6 +440,7 @@ blah3/
 │   │   ├── ScreenReader.tsx      # TTS playback controls
 │   │   ├── ModelManager.tsx      # Download/manage models
 │   │   ├── SettingsPanel.tsx     # Configuration + silence detection + autostart
+│   │   ├── DictationOverlay.tsx  # Dictation HUD with waveform, streaming transcripts
 │   │   ├── FloatingOverlay.tsx   # Compact pill overlay with timer, audio levels, stop
 │   │   ├── StatusIndicator.tsx   # Global status + toast notifications
 │   │   ├── Onboarding.tsx        # First-run wizard (permissions, models, hotkeys)
@@ -444,7 +449,8 @@ blah3/
 │   ├── hooks/
 │   │   ├── useSTT.ts             # STT state management
 │   │   ├── useTTS.ts             # TTS state management
-│   │   └── useModels.ts          # Model download state
+│   │   ├── useModels.ts          # Model download state
+│   │   └── usePermissions.ts     # macOS permission status polling
 │   └── lib/
 │       └── tauri.ts              # Typed Tauri command bindings
 │
@@ -777,7 +783,7 @@ cd src-tauri && cargo clippy -- -D warnings
 
 ### Phase 1: Foundation ✅
 - [x] Scaffold Tauri v2 project with React frontend
-- [ ] Implement macOS permissions flow (mic + accessibility) — *using system prompts for now*
+- [x] Implement macOS permissions flow (mic + accessibility) — *live status checking via AXIsProcessTrusted FFI + cpal*
 - [x] Build model downloader with progress UI
 - [x] Set up audio capture pipeline (cpal, 16kHz mono)
 - [x] Integrate whisper-rs for basic transcription
@@ -785,7 +791,7 @@ cd src-tauri && cargo clippy -- -D warnings
 
 ### Phase 2: STT Polish ✅
 - [x] Hold-to-record hotkey behavior
-- [x] Floating recording overlay with waveform — *basic implementation*
+- [x] Floating recording overlay with waveform — *redesigned: real audio waveform, streaming transcripts, timer*
 - [x] Auto-paste transcription into active app — *via clipboard + Cmd+V*
 - [x] Silence detection for auto-stop — *RMS-based, configurable threshold/duration*
 - [x] CoreML model support for speed boost — *downloadable via Model Manager, auto-detected by whisper.cpp*
