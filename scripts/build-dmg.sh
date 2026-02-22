@@ -59,28 +59,29 @@ pnpm install
 # Determine signing identity
 # Use APPLE_SIGNING_IDENTITY env var if set (e.g. "Developer ID Application: Name (TEAMID)")
 # Otherwise fall back to ad-hoc signing ("-")
-SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
+export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:--}"
 
-if [ "$SIGNING_IDENTITY" = "-" ]; then
+if [ "$APPLE_SIGNING_IDENTITY" = "-" ]; then
     echo -e "${YELLOW}Using ad-hoc code signing (no Apple Developer ID)${NC}"
 else
-    echo -e "${GREEN}Using signing identity:${NC} $SIGNING_IDENTITY"
+    echo -e "${GREEN}Using signing identity:${NC} $APPLE_SIGNING_IDENTITY"
 fi
 echo ""
 
-# Step 1: Build the .app bundle only
-echo "Building Blah³ app bundle..."
+# Build the app with Tauri's built-in signing
+echo "Building Blah³..."
 echo "This may take several minutes on first build."
 echo ""
 
+# Tauri v2 reads APPLE_SIGNING_IDENTITY for code signing
+# It will also notarize if APPLE_ID, APPLE_PASSWORD, and APPLE_TEAM_ID are set
 cargo tauri build --bundles app 2>&1 | while IFS= read -r line; do
-    # Show progress without overwhelming output
-    if [[ "$line" == *"Compiling"* ]] || [[ "$line" == *"Finished"* ]] || [[ "$line" == *"Bundling"* ]]; then
+    if [[ "$line" == *"Compiling"* ]] || [[ "$line" == *"Finished"* ]] || [[ "$line" == *"Bundling"* ]] || [[ "$line" == *"Signing"* ]]; then
         echo "$line"
     fi
 done
 
-# Step 2: Find and sign the .app bundle
+# Find the .app bundle
 APP_PATH=$(find "$PROJECT_DIR/src-tauri/target" -path "*/bundle/macos/*.app" -type d 2>/dev/null | head -1)
 
 if [ -z "$APP_PATH" ]; then
@@ -88,44 +89,38 @@ if [ -z "$APP_PATH" ]; then
     exit 1
 fi
 
+# Verify code signature
 echo ""
-echo "Signing app bundle: $APP_PATH"
-
-# Remove any existing signatures
-codesign --remove-signature "$APP_PATH" 2>/dev/null || true
-
-# Sign all nested frameworks and binaries, then the app itself
-codesign --force --deep --sign "$SIGNING_IDENTITY" \
-    --entitlements "$PROJECT_DIR/src-tauri/entitlements.plist" \
-    "$APP_PATH"
-
-# Verify the signature
 if codesign --verify --deep --strict "$APP_PATH" 2>/dev/null; then
-    echo -e "${GREEN}Code signing successful${NC}"
+    echo -e "${GREEN}Code signature verified${NC}"
 else
-    echo -e "${YELLOW}Warning: Code signing verification failed, continuing anyway${NC}"
+    echo -e "${YELLOW}Warning: Code signature verification failed${NC}"
 fi
 
-# Step 3: Build the DMG from the signed .app
+# Create DMG manually (Tauri's bundle_dmg.sh can fail with special characters)
 echo ""
-echo "Packaging DMG..."
+echo "Creating DMG..."
 
-cargo tauri build --bundles dmg 2>&1 | while IFS= read -r line; do
-    if [[ "$line" == *"Bundling"* ]] || [[ "$line" == *"Finished"* ]]; then
-        echo "$line"
-    fi
-done
+DMG_DIR="$PROJECT_DIR/src-tauri/target/release/bundle/dmg"
+mkdir -p "$DMG_DIR"
 
-# Find the DMG
-DMG_PATH=$(find "$PROJECT_DIR/src-tauri/target" -name "*.dmg" -type f 2>/dev/null | head -1)
+# Extract version from tauri.conf.json
+VERSION=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/src-tauri/tauri.conf.json'))['version'])")
+ARCH=$(uname -m | sed 's/arm64/aarch64/')
+DMG_NAME="Blah3_${VERSION}_${ARCH}.dmg"
+DMG_PATH="$DMG_DIR/$DMG_NAME"
 
-if [ -z "$DMG_PATH" ]; then
-    echo -e "${RED}Error: DMG not found after build${NC}"
-    exit 1
-fi
+# Create temp directory with app and Applications symlink
+TEMP_DIR=$(mktemp -d)
+cp -R "$APP_PATH" "$TEMP_DIR/"
+ln -s /Applications "$TEMP_DIR/Applications"
+
+# Create compressed DMG
+rm -f "$DMG_PATH"
+hdiutil create -volname "Blah³" -srcfolder "$TEMP_DIR" -ov -format UDZO "$DMG_PATH"
+rm -rf "$TEMP_DIR"
 
 # Get DMG info
-DMG_NAME=$(basename "$DMG_PATH")
 DMG_SIZE=$(du -h "$DMG_PATH" | cut -f1)
 
 echo ""
@@ -135,10 +130,10 @@ echo "==================================="
 echo ""
 echo -e "DMG Location: ${YELLOW}$DMG_PATH${NC}"
 echo -e "DMG Size: ${YELLOW}$DMG_SIZE${NC}"
-if [ "$SIGNING_IDENTITY" = "-" ]; then
+if [ "$APPLE_SIGNING_IDENTITY" = "-" ]; then
     echo -e "Signing: ${YELLOW}Ad-hoc (users will need to right-click → Open on first launch)${NC}"
 else
-    echo -e "Signing: ${GREEN}$SIGNING_IDENTITY${NC}"
+    echo -e "Signing: ${GREEN}$APPLE_SIGNING_IDENTITY${NC}"
 fi
 echo ""
 echo "To install:"
@@ -151,5 +146,5 @@ echo ""
 read -p "Open build folder in Finder? [y/N] " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    open "$(dirname "$DMG_PATH")"
+    open "$DMG_DIR"
 fi
