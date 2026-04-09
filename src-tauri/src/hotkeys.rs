@@ -347,22 +347,33 @@ fn handle_tts_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutSta
             }
         };
 
-        // For now, emit that we would speak the text
-        // Full TTS integration requires kokoroxide
-        tracing::info!("Would speak with voice '{}' at {}x speed: {}",
-            settings.tts_voice, settings.tts_speed, &text);
+        let model_path = dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("com.blahcubed.app")
+            .join("models")
+            .join("tts")
+            .join("kokoro-v1.0.onnx")
+            .to_string_lossy()
+            .to_string();
 
-        // TODO: Implement actual TTS when kokoroxide is integrated
-        // let models_dir = dirs::data_dir()
-        //     .unwrap_or_default()
-        //     .join("com.blahcubed.app")
-        //     .join("models")
-        //     .join("tts");
-        // let model_path = models_dir.join("kokoro-v1.0.onnx");
-
-        // Emit completion for now
-        if let Err(e) = app_handle.emit("tts-finished", ()) {
-            tracing::warn!("Failed to emit tts-finished event: {}", e);
+        match crate::commands::tts::speak_text(
+            text.clone(),
+            settings.tts_voice.clone(),
+            settings.tts_speed,
+            model_path,
+        ).await {
+            Ok(()) => {
+                tracing::info!("TTS playback completed");
+                if let Err(e) = app_handle.emit("tts-finished", ()) {
+                    tracing::warn!("Failed to emit tts-finished event: {}", e);
+                }
+            }
+            Err(e) => {
+                tracing::error!("TTS failed: {}", e);
+                if let Err(emit_err) = app_handle.emit("tts-error", format!("Speech failed: {}", e)) {
+                    tracing::warn!("Failed to emit tts-error event: {}", emit_err);
+                }
+            }
         }
     });
 }

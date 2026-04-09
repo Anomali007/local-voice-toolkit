@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { appDataDir, join } from "@tauri-apps/api/path";
 
 interface Voice {
   id: string;
@@ -84,7 +85,8 @@ export function useTTS() {
         setError(null);
         setIsSpeaking(true);
 
-        const modelPath = `${getModelsDir()}/tts/kokoro-v1.0.onnx`;
+        const dataDir = await appDataDir();
+        const modelPath = await join(dataDir, "models", "tts", "kokoro-v1.0.onnx");
 
         await invoke("speak_text", {
           text,
@@ -149,6 +151,7 @@ export function useTTS() {
   };
 }
 
-function getModelsDir(): string {
-  return "$HOME/Library/Application Support/com.blahcubed.app/models";
+async function getModelsDir(): Promise<string> {
+  const dataDir = await appDataDir();
+  return await join(dataDir, "models");
 }

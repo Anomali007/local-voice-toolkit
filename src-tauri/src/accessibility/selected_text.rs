@@ -5,21 +5,53 @@ use std::process::Command;
 /// Get the currently selected text from the frontmost application.
 /// Uses AppleScript as a reliable cross-app method.
 pub fn get_selected_text() -> Option<String> {
-    // First, try to get selected text via AppleScript
-    // This works for most standard macOS apps
-    let script = r#"
+    // Detect the frontmost app to handle terminal apps differently
+    let frontapp_script = r#"
         tell application "System Events"
             set frontApp to name of first application process whose frontmost is true
         end tell
-
-        tell application "System Events"
-            keystroke "c" using {command down}
-        end tell
-
-        delay 0.1
-
-        the clipboard
+        return frontApp
     "#;
+
+    let frontapp = Command::new("osascript")
+        .arg("-e")
+        .arg(frontapp_script)
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    // For Terminal/iTerm, Cmd+C sends SIGINT — use a different approach
+    let copy_script = if frontapp == "Terminal" || frontapp == "iTerm2" || frontapp == "Alacritty" || frontapp == "kitty" || frontapp == "WezTerm" || frontapp == "Warp" {
+        // Terminal apps: try the Edit menu Copy command instead of keystroke
+        r#"
+            tell application "System Events"
+                tell process "Terminal"
+                    try
+                        click menu item "Copy" of menu "Edit" of menu bar 1
+                    end try
+                end tell
+            end tell
+            delay 0.15
+            the clipboard
+        "#.to_string()
+    } else {
+        r#"
+            tell application "System Events"
+                keystroke "c" using {command down}
+            end tell
+            delay 0.1
+            the clipboard
+        "#.to_string()
+    };
+
+    let script = &copy_script;
 
     // Save current clipboard
     let old_clipboard = get_clipboard();

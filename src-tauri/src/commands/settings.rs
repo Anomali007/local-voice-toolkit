@@ -40,8 +40,8 @@ fn default_silence_duration() -> f32 {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            stt_hotkey: "CommandOrControl+Shift+D".to_string(),
-            tts_hotkey: "CommandOrControl+Shift+S".to_string(),
+            stt_hotkey: "Option+D".to_string(),
+            tts_hotkey: "Option+S".to_string(),
             stt_model: "ggml-base.en.bin".to_string(),
             tts_voice: "af_heart".to_string(),
             tts_speed: 1.0,
