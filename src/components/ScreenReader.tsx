@@ -87,12 +87,26 @@ export default function ScreenReader() {
         </div>
       </div>
 
+      {/* Voice Cloning — Coming Soon */}
+      <div className="p-4 bg-slate-800/50 border border-slate-700/50 rounded-lg">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium text-slate-300">Voice Cloning</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              Clone any voice from a 5+ second audio sample. Create custom voice avatars for personalized TTS.
+            </p>
+          </div>
+          <span className="px-2 py-1 text-xs font-medium bg-amber-500/20 text-amber-400 rounded-full whitespace-nowrap">
+            Coming Soon
+          </span>
+        </div>
+      </div>
+
       {/* Hotkey Hint */}
       <div className="text-center">
         <p className="text-xs text-slate-500">
           Tip: Select text anywhere and press{" "}
-          <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300">⌘</kbd> +{" "}
-          <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300">⇧</kbd> +{" "}
+          <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300">⌥</kbd> +{" "}
           <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300">S</kbd> to read it aloud
         </p>
       </div>

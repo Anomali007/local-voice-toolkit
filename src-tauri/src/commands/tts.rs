@@ -116,55 +116,73 @@ pub async fn stop_speaking() -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_voices() -> Vec<VoiceInfo> {
-    // Kokoro-82M voices - subset of the 54 available
     vec![
-        VoiceInfo {
-            id: "af_heart".to_string(),
-            name: "Heart".to_string(),
-            language: "en-US".to_string(),
-            gender: "Female".to_string(),
-        },
-        VoiceInfo {
-            id: "af_bella".to_string(),
-            name: "Bella".to_string(),
-            language: "en-US".to_string(),
-            gender: "Female".to_string(),
-        },
-        VoiceInfo {
-            id: "af_nicole".to_string(),
-            name: "Nicole".to_string(),
-            language: "en-US".to_string(),
-            gender: "Female".to_string(),
-        },
-        VoiceInfo {
-            id: "af_sky".to_string(),
-            name: "Sky".to_string(),
-            language: "en-US".to_string(),
-            gender: "Female".to_string(),
-        },
-        VoiceInfo {
-            id: "am_adam".to_string(),
-            name: "Adam".to_string(),
-            language: "en-US".to_string(),
-            gender: "Male".to_string(),
-        },
-        VoiceInfo {
-            id: "am_michael".to_string(),
-            name: "Michael".to_string(),
-            language: "en-US".to_string(),
-            gender: "Male".to_string(),
-        },
-        VoiceInfo {
-            id: "bf_emma".to_string(),
-            name: "Emma".to_string(),
-            language: "en-GB".to_string(),
-            gender: "Female".to_string(),
-        },
-        VoiceInfo {
-            id: "bm_george".to_string(),
-            name: "George".to_string(),
-            language: "en-GB".to_string(),
-            gender: "Male".to_string(),
-        },
+        // American English - Female
+        VoiceInfo { id: "af_heart".into(), name: "Heart".into(), language: "en-US".into(), gender: "Female".into() },
+        VoiceInfo { id: "af_alloy".into(), name: "Alloy".into(), language: "en-US".into(), gender: "Female".into() },
+        VoiceInfo { id: "af_aoede".into(), name: "Aoede".into(), language: "en-US".into(), gender: "Female".into() },
+        VoiceInfo { id: "af_bella".into(), name: "Bella".into(), language: "en-US".into(), gender: "Female".into() },
+        VoiceInfo { id: "af_jessica".into(), name: "Jessica".into(), language: "en-US".into(), gender: "Female".into() },
+        VoiceInfo { id: "af_kore".into(), name: "Kore".into(), language: "en-US".into(), gender: "Female".into() },
+        VoiceInfo { id: "af_nicole".into(), name: "Nicole".into(), language: "en-US".into(), gender: "Female".into() },
+        VoiceInfo { id: "af_nova".into(), name: "Nova".into(), language: "en-US".into(), gender: "Female".into() },
+        VoiceInfo { id: "af_river".into(), name: "River".into(), language: "en-US".into(), gender: "Female".into() },
+        VoiceInfo { id: "af_sarah".into(), name: "Sarah".into(), language: "en-US".into(), gender: "Female".into() },
+        VoiceInfo { id: "af_sky".into(), name: "Sky".into(), language: "en-US".into(), gender: "Female".into() },
+        // American English - Male
+        VoiceInfo { id: "am_adam".into(), name: "Adam".into(), language: "en-US".into(), gender: "Male".into() },
+        VoiceInfo { id: "am_echo".into(), name: "Echo".into(), language: "en-US".into(), gender: "Male".into() },
+        VoiceInfo { id: "am_eric".into(), name: "Eric".into(), language: "en-US".into(), gender: "Male".into() },
+        VoiceInfo { id: "am_fable".into(), name: "Fable".into(), language: "en-US".into(), gender: "Male".into() },
+        VoiceInfo { id: "am_liam".into(), name: "Liam".into(), language: "en-US".into(), gender: "Male".into() },
+        VoiceInfo { id: "am_michael".into(), name: "Michael".into(), language: "en-US".into(), gender: "Male".into() },
+        VoiceInfo { id: "am_onyx".into(), name: "Onyx".into(), language: "en-US".into(), gender: "Male".into() },
+        VoiceInfo { id: "am_puck".into(), name: "Puck".into(), language: "en-US".into(), gender: "Male".into() },
+        // British English - Female
+        VoiceInfo { id: "bf_alice".into(), name: "Alice".into(), language: "en-GB".into(), gender: "Female".into() },
+        VoiceInfo { id: "bf_emma".into(), name: "Emma".into(), language: "en-GB".into(), gender: "Female".into() },
+        VoiceInfo { id: "bf_isabella".into(), name: "Isabella".into(), language: "en-GB".into(), gender: "Female".into() },
+        VoiceInfo { id: "bf_lily".into(), name: "Lily".into(), language: "en-GB".into(), gender: "Female".into() },
+        // British English - Male
+        VoiceInfo { id: "bm_daniel".into(), name: "Daniel".into(), language: "en-GB".into(), gender: "Male".into() },
+        VoiceInfo { id: "bm_fable".into(), name: "Fable (UK)".into(), language: "en-GB".into(), gender: "Male".into() },
+        VoiceInfo { id: "bm_george".into(), name: "George".into(), language: "en-GB".into(), gender: "Male".into() },
+        VoiceInfo { id: "bm_lewis".into(), name: "Lewis".into(), language: "en-GB".into(), gender: "Male".into() },
+        // French
+        VoiceInfo { id: "ff_siwis".into(), name: "Siwis".into(), language: "fr-FR".into(), gender: "Female".into() },
+        // Hindi
+        VoiceInfo { id: "hf_alpha".into(), name: "Alpha".into(), language: "hi-IN".into(), gender: "Female".into() },
+        VoiceInfo { id: "hf_beta".into(), name: "Beta".into(), language: "hi-IN".into(), gender: "Female".into() },
+        VoiceInfo { id: "hm_omega".into(), name: "Omega".into(), language: "hi-IN".into(), gender: "Male".into() },
+        VoiceInfo { id: "hm_psi".into(), name: "Psi".into(), language: "hi-IN".into(), gender: "Male".into() },
+        // Italian
+        VoiceInfo { id: "if_sara".into(), name: "Sara".into(), language: "it-IT".into(), gender: "Female".into() },
+        VoiceInfo { id: "im_nicola".into(), name: "Nicola".into(), language: "it-IT".into(), gender: "Male".into() },
+        // Japanese
+        VoiceInfo { id: "jf_alpha".into(), name: "Alpha".into(), language: "ja-JP".into(), gender: "Female".into() },
+        VoiceInfo { id: "jf_gongitsune".into(), name: "Gongitsune".into(), language: "ja-JP".into(), gender: "Female".into() },
+        VoiceInfo { id: "jf_nezumi".into(), name: "Nezumi".into(), language: "ja-JP".into(), gender: "Female".into() },
+        VoiceInfo { id: "jf_tebukuro".into(), name: "Tebukuro".into(), language: "ja-JP".into(), gender: "Female".into() },
+        VoiceInfo { id: "jm_kumo".into(), name: "Kumo".into(), language: "ja-JP".into(), gender: "Male".into() },
+        // Korean
+        VoiceInfo { id: "kf_alpha".into(), name: "Alpha".into(), language: "ko-KR".into(), gender: "Female".into() },
+        VoiceInfo { id: "kf_beta".into(), name: "Beta".into(), language: "ko-KR".into(), gender: "Female".into() },
+        // Portuguese (Brazil)
+        VoiceInfo { id: "pf_dora".into(), name: "Dora".into(), language: "pt-BR".into(), gender: "Female".into() },
+        VoiceInfo { id: "pm_alex".into(), name: "Alex".into(), language: "pt-BR".into(), gender: "Male".into() },
+        VoiceInfo { id: "pm_santa".into(), name: "Santa".into(), language: "pt-BR".into(), gender: "Male".into() },
+        // Mandarin Chinese
+        VoiceInfo { id: "zf_xiaobei".into(), name: "Xiaobei".into(), language: "zh-CN".into(), gender: "Female".into() },
+        VoiceInfo { id: "zf_xiaoni".into(), name: "Xiaoni".into(), language: "zh-CN".into(), gender: "Female".into() },
+        VoiceInfo { id: "zf_xiaoxiao".into(), name: "Xiaoxiao".into(), language: "zh-CN".into(), gender: "Female".into() },
+        VoiceInfo { id: "zf_xiaoyi".into(), name: "Xiaoyi".into(), language: "zh-CN".into(), gender: "Female".into() },
+        VoiceInfo { id: "zm_yunjian".into(), name: "Yunjian".into(), language: "zh-CN".into(), gender: "Male".into() },
+        VoiceInfo { id: "zm_yunxi".into(), name: "Yunxi".into(), language: "zh-CN".into(), gender: "Male".into() },
+        VoiceInfo { id: "zm_yunxia".into(), name: "Yunxia".into(), language: "zh-CN".into(), gender: "Male".into() },
+        VoiceInfo { id: "zm_yunyang".into(), name: "Yunyang".into(), language: "zh-CN".into(), gender: "Male".into() },
+        // Spanish
+        VoiceInfo { id: "ef_dalia".into(), name: "Dalia".into(), language: "es-ES".into(), gender: "Female".into() },
+        VoiceInfo { id: "em_alex".into(), name: "Alex".into(), language: "es-ES".into(), gender: "Male".into() },
+        VoiceInfo { id: "em_santa".into(), name: "Santa".into(), language: "es-ES".into(), gender: "Male".into() },
     ]
 }

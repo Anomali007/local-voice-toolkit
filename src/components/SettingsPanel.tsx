@@ -99,22 +99,20 @@ export default function SettingsPanel() {
   };
 
   const openSystemPreferences = async (pane: string) => {
+    // Use invoke to run shell command — URL schemes are unreliable on Sonoma+
     try {
       if (pane === "Privacy_Microphone") {
-        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+        await invoke("open_system_settings", { pane: "microphone" });
       } else if (pane === "Privacy_Accessibility") {
-        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+        await invoke("open_system_settings", { pane: "accessibility" });
       }
-    } catch {
-      // Fallback for macOS Sonoma+
+    } catch (e) {
+      console.error("Failed to open system settings:", e);
+      // Last resort fallback
       try {
-        if (pane === "Privacy_Microphone") {
-          await open("x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension-point?Microphone");
-        } else if (pane === "Privacy_Accessibility") {
-          await open("x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension-point?Accessibility");
-        }
-      } catch (e) {
-        console.error("Failed to open system preferences:", e);
+        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+      } catch {
+        console.error("All methods to open system settings failed");
       }
     }
   };

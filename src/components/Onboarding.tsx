@@ -106,25 +106,14 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   };
 
   const openSystemPreferences = async (pane: string) => {
-    // macOS Sonoma (14+) uses different URL scheme
-    // Use the shell open command for reliability
     try {
       if (pane === "Privacy_Microphone") {
-        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+        await invoke("open_system_settings", { pane: "microphone" });
       } else if (pane === "Privacy_Accessibility") {
-        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+        await invoke("open_system_settings", { pane: "accessibility" });
       }
-    } catch {
-      // Fallback: try opening System Settings directly
-      try {
-        if (pane === "Privacy_Microphone") {
-          await open("x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension-point?Microphone");
-        } else if (pane === "Privacy_Accessibility") {
-          await open("x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension-point?Accessibility");
-        }
-      } catch (e) {
-        console.error("Failed to open system preferences:", e);
-      }
+    } catch (e) {
+      console.error("Failed to open system settings:", e);
     }
   };
 

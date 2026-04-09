@@ -90,6 +90,7 @@ pub fn run() {
             commands::settings::update_settings,
             commands::settings::get_hardware_info,
             commands::permissions::check_permissions,
+            commands::permissions::open_system_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
