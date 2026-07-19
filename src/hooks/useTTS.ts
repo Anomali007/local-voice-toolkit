@@ -151,7 +151,3 @@ export function useTTS() {
   };
 }
 
-async function getModelsDir(): Promise<string> {
-  const dataDir = await appDataDir();
-  return await join(dataDir, "models");
-}
