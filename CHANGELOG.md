@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Escape key cancels an in-progress dictation without transcribing or pasting
 - Initial Speech-to-Text (STT) engine using whisper-rs with CoreML/Metal acceleration
 - Text-to-Speech (TTS) placeholder using kokoroxide (Kokoro-82M)
 - Global hotkey support for dictation (⌘+⇧+D) and screen reading (⌘+⇧+S)
@@ -31,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Transcription uses `transcribe_streaming` with segment callbacks instead of batch-only processing
 - Onboarding permission cards show live granted/not-granted status and hide button when granted
 - Settings panel permission rows show green "Granted" or red "Not Granted" badges
+- Dictation hotkey is now hybrid: tap to start / tap again to stop, or hold push-to-talk style and release to stop
+- Silence auto-stop now applies to hotkey dictation (was panel-only) so tap-started dictation finishes hands-free
+- Whisper model is cached between dictations and preloaded at launch instead of reloading from disk every time
+- Closing the main window hides it (tray "Show Blah³" keeps working); quit from the tray menu
 
 ### Deprecated
 - N/A
@@ -39,7 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - N/A
 
 ### Fixed
-- N/A
+- Dictation overlay window was denied all IPC (missing from capabilities), so it never received recording/transcribing/result events
+- Auto-paste no longer permanently clobbers the clipboard: previous text contents are restored after the paste
+- Auto-paste failures now show an error toast (text stays in clipboard for manual Cmd+V) instead of failing silently
+- A quick tap of the dictation hotkey no longer errors with "No audio captured"
+- App test suite repaired (async onboarding gate was unmocked) and tsc --noEmit errors removed
 
 ### Security
 - N/A
