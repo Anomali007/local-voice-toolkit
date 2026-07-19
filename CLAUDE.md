@@ -265,6 +265,17 @@ pnpm tauri:build
 6. Model download/management works
 
 ### Troubleshooting
+
+**Release build fails in `espeak-rs-sys` with `Failed to open: '...phsource/vwl_en_us_nyc/a_rais'`:**
+espeak-ng's phoneme compiler truncates paths at ~160 chars (fixed buffer). With the
+repo at `~/Development/MASS/apps/BlahBlahBlah/blah3`, the default
+`target/release/build/espeak-rs-sys-<hash>/out/...` path is 2 chars too long
+(debug builds still fit). Work around it with a short target dir:
+```bash
+CARGO_TARGET_DIR=~/.cache/b3t pnpm tauri build
+# bundle lands in ~/.cache/b3t/release/bundle/macos/Blah³.app
+```
+
 ```bash
 # Clean build artifacts
 pnpm clean
