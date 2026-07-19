@@ -1,17 +1,24 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use crate::accessibility::{self, FrontmostAppInfo};
-use crate::audio::capture::AudioCapture;
+use crate::audio::capture::{AudioCapture, SilenceConfig};
 use crate::commands::settings::get_settings;
 use crate::overlay;
+
+/// A key release faster than this is treated as a "tap" (toggle mode: keep
+/// recording until the hotkey is pressed again, silence auto-stops, or Escape
+/// cancels). A slower release is treated as push-to-talk (stop on release).
+const HOLD_THRESHOLD_MS: u128 = 500;
 
 /// Shared state for tracking recording status
 pub struct HotkeyState {
     pub is_recording: AtomicBool,
     pub audio_capture: tokio::sync::Mutex<Option<AudioCapture>>,
+    pub started_at: std::sync::Mutex<Option<Instant>>,
 }
 
 impl Default for HotkeyState {
@@ -19,6 +26,7 @@ impl Default for HotkeyState {
         Self {
             is_recording: AtomicBool::new(false),
             audio_capture: tokio::sync::Mutex::new(None),
+            started_at: std::sync::Mutex::new(None),
         }
     }
 }
@@ -81,233 +89,351 @@ struct SttRecordingStartedPayload {
     target_app: Option<FrontmostAppInfo>,
 }
 
-/// Handle STT (dictation) shortcut - press to start, release to stop
+/// Handle STT (dictation) shortcut.
+/// Hybrid model:
+/// - Tap once to start recording, tap again to stop-and-transcribe.
+/// - Or hold the hotkey push-to-talk style and release to stop.
+/// - Escape cancels an in-progress recording without pasting anything.
+/// - If silence detection is enabled, recording auto-stops after silence.
 fn handle_stt_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutState) {
     let state = app.state::<Arc<HotkeyState>>();
 
     match event {
         ShortcutState::Pressed => {
-            if !state.is_recording.load(Ordering::SeqCst) {
+            if state
+                .is_recording
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
                 tracing::info!("STT hotkey pressed - starting recording");
-
-                // Capture frontmost app BEFORE showing overlay
-                let target_app = accessibility::get_frontmost_app();
-                tracing::debug!("Target app for dictation: {:?}", target_app);
-
-                state.is_recording.store(true, Ordering::SeqCst);
-
-                // Show the dictation overlay
-                if let Err(e) = overlay::show_overlay(app) {
-                    tracing::warn!("Failed to show dictation overlay: {}", e);
-                }
-
-                // Emit event to frontend with target app info
-                let payload = SttRecordingStartedPayload {
-                    target_app: target_app.clone(),
-                };
-                if let Err(e) = app.emit("stt-recording-started", payload) {
-                    tracing::warn!("Failed to emit stt-recording-started event: {}", e);
-                }
-
-                // Start audio capture in background
-                let app_handle = app.clone();
-                let state_clone = Arc::clone(&state);
-                tauri::async_runtime::spawn(async move {
-                    match AudioCapture::new() {
-                        Ok(capture) => {
-                            if let Err(e) = capture.start() {
-                                tracing::error!("Failed to start audio capture: {}", e);
-                                if let Err(emit_err) = app_handle.emit("stt-error", format!("Failed to start microphone: {}", e)) {
-                                    tracing::warn!("Failed to emit error to UI: {}", emit_err);
-                                }
-                                // Hide overlay on error
-                                let _ = overlay::hide_overlay(&app_handle);
-                                return;
-                            }
-                            let mut guard = state_clone.audio_capture.lock().await;
-                            *guard = Some(capture);
-
-                            // Spawn audio level emission task for overlay visualization
-                            let app_for_levels = app_handle.clone();
-                            let state_for_levels = Arc::clone(&state_clone);
-                            tauri::async_runtime::spawn(async move {
-                                loop {
-                                    if !state_for_levels.is_recording.load(Ordering::SeqCst) {
-                                        break;
-                                    }
-                                    let level = {
-                                        let guard = state_for_levels.audio_capture.lock().await;
-                                        guard.as_ref().map(|c| c.current_level()).unwrap_or(0.0)
-                                    };
-                                    let _ = app_for_levels.emit("stt-audio-level", level);
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to create audio capture: {}", e);
-                            if let Err(emit_err) = app_handle.emit("stt-error", format!("Microphone unavailable: {}", e)) {
-                                tracing::warn!("Failed to emit error to UI: {}", emit_err);
-                            }
-                            // Hide overlay on error
-                            let _ = overlay::hide_overlay(&app_handle);
-                        }
-                    }
-                });
+                start_dictation(app);
+            } else {
+                // Second press while recording = toggle off
+                tracing::info!("STT hotkey pressed while recording - stopping");
+                stop_and_transcribe(app);
             }
         }
         ShortcutState::Released => {
-            if state.is_recording.load(Ordering::SeqCst) {
-                tracing::info!("STT hotkey released - stopping recording");
-                state.is_recording.store(false, Ordering::SeqCst);
+            let held_ms = state
+                .started_at
+                .lock()
+                .ok()
+                .and_then(|guard| guard.map(|t| t.elapsed().as_millis()))
+                .unwrap_or(0);
 
-                // Emit event to frontend
-                if let Err(e) = app.emit("stt-recording-stopped", ()) {
-                    tracing::warn!("Failed to emit stt-recording-stopped event: {}", e);
+            if state.is_recording.load(Ordering::SeqCst) && held_ms >= HOLD_THRESHOLD_MS {
+                // Push-to-talk: key was held down while speaking
+                tracing::info!("STT hotkey released after {}ms hold - stopping recording", held_ms);
+                stop_and_transcribe(app);
+            }
+            // Quick release (< threshold) = tap: keep recording (toggle mode)
+        }
+    }
+}
+
+/// Begin a dictation session: show overlay, start capture, arm Escape-to-cancel.
+/// Caller must have already flipped `is_recording` false -> true.
+fn start_dictation(app: &AppHandle) {
+    let state = app.state::<Arc<HotkeyState>>();
+
+    if let Ok(mut guard) = state.started_at.lock() {
+        *guard = Some(Instant::now());
+    }
+
+    // Capture frontmost app BEFORE showing overlay
+    let target_app = accessibility::get_frontmost_app();
+    tracing::debug!("Target app for dictation: {:?}", target_app);
+
+    // Show the dictation overlay
+    if let Err(e) = overlay::show_overlay(app) {
+        tracing::warn!("Failed to show dictation overlay: {}", e);
+    }
+
+    // Emit event to frontend with target app info
+    let payload = SttRecordingStartedPayload {
+        target_app: target_app.clone(),
+    };
+    if let Err(e) = app.emit("stt-recording-started", payload) {
+        tracing::warn!("Failed to emit stt-recording-started event: {}", e);
+    }
+
+    // Escape cancels the recording while it is active
+    register_cancel_shortcut(app);
+
+    // Start audio capture in background
+    let app_handle = app.clone();
+    let state_clone = Arc::clone(&state);
+    tauri::async_runtime::spawn(async move {
+        let settings = match get_settings() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("Failed to load settings for capture, using defaults: {}", e);
+                crate::commands::settings::AppSettings::default()
+            }
+        };
+        let silence_config = SilenceConfig {
+            enabled: settings.silence_detection_enabled,
+            threshold: settings.silence_threshold,
+            duration_secs: settings.silence_duration,
+        };
+
+        match AudioCapture::with_silence_config(silence_config) {
+            Ok(capture) => {
+                if let Err(e) = capture.start() {
+                    tracing::error!("Failed to start audio capture: {}", e);
+                    if let Err(emit_err) = app_handle.emit("stt-error", format!("Failed to start microphone: {}", e)) {
+                        tracing::warn!("Failed to emit error to UI: {}", emit_err);
+                    }
+                    abort_dictation(&app_handle);
+                    return;
                 }
+                let mut guard = state_clone.audio_capture.lock().await;
+                *guard = Some(capture);
+                drop(guard);
 
-                // Stop capture and transcribe in background
-                let app_handle = app.clone();
-                let state_clone = Arc::clone(&state);
+                // Spawn audio level emission + silence watcher for the overlay
+                let app_for_levels = app_handle.clone();
+                let state_for_levels = Arc::clone(&state_clone);
                 tauri::async_runtime::spawn(async move {
-                    let audio_data = {
-                        let mut guard = state_clone.audio_capture.lock().await;
-                        if let Some(capture) = guard.take() {
-                            match capture.stop() {
-                                Ok(data) => data,
-                                Err(e) => {
-                                    tracing::error!("Failed to stop capture: {}", e);
-                                    if let Err(emit_err) = app_handle.emit("stt-error", format!("Recording error: {}", e)) {
-                                        tracing::warn!("Failed to emit error to UI: {}", emit_err);
-                                    }
-                                    return;
-                                }
+                    loop {
+                        if !state_for_levels.is_recording.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        let (level, silence_triggered) = {
+                            let guard = state_for_levels.audio_capture.lock().await;
+                            match guard.as_ref() {
+                                Some(c) => (c.current_level(), c.is_silence_triggered()),
+                                None => (0.0, false),
                             }
-                        } else {
-                            Vec::new()
+                        };
+                        if silence_triggered {
+                            tracing::info!("Silence detected - auto-stopping dictation");
+                            stop_and_transcribe(&app_for_levels);
+                            break;
                         }
-                    };
-
-                    if audio_data.is_empty() {
-                        tracing::warn!("No audio data captured");
-                        if let Err(e) = app_handle.emit("stt-error", "No audio captured. Please check microphone permissions.") {
-                            tracing::warn!("Failed to emit error to UI: {}", e);
-                        }
-                        // Hide overlay on error after brief delay
-                        let app_for_hide = app_handle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                            let _ = overlay::hide_overlay(&app_for_hide);
-                        });
-                        return;
-                    }
-
-                    tracing::info!("Captured {} audio samples, transcribing...", audio_data.len());
-                    if let Err(e) = app_handle.emit("stt-transcribing", ()) {
-                        tracing::warn!("Failed to emit stt-transcribing event: {}", e);
-                    }
-
-                    // Get model path from settings
-                    let settings = match get_settings() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            tracing::warn!("Failed to load settings for transcription, using defaults: {}", e);
-                            crate::commands::settings::AppSettings::default()
-                        }
-                    };
-                    let models_dir = match dirs::data_dir() {
-                        Some(dir) => dir.join("com.blahcubed.app").join("models").join("stt"),
-                        None => {
-                            tracing::error!("Could not determine data directory");
-                            if let Err(e) = app_handle.emit("stt-error", "Could not find application data directory") {
-                                tracing::warn!("Failed to emit error to UI: {}", e);
-                            }
-                            // Hide overlay on error after brief delay
-                            let app_for_hide = app_handle.clone();
-                            tauri::async_runtime::spawn(async move {
-                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                                let _ = overlay::hide_overlay(&app_for_hide);
-                            });
-                            return;
-                        }
-                    };
-                    let model_path = models_dir.join(&settings.stt_model);
-
-                    if !model_path.exists() {
-                        let error_msg = format!("Model not found: {}. Please download it from the Models tab.", settings.stt_model);
-                        if let Err(e) = app_handle.emit("stt-error", &error_msg) {
-                            tracing::warn!("Failed to emit error to UI: {}", e);
-                        }
-                        // Hide overlay on error after brief delay
-                        let app_for_hide = app_handle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                            let _ = overlay::hide_overlay(&app_for_hide);
-                        });
-                        return;
-                    }
-
-                    // Transcribe - use to_string_lossy() to safely handle non-UTF8 paths
-                    let model_path_str = model_path.to_string_lossy();
-                    match crate::engines::whisper::WhisperEngine::new(&model_path_str) {
-                        Ok(engine) => {
-                            let app_for_segments = app_handle.clone();
-                            let mut accumulated_text = String::new();
-                            let on_segment = move |data: whisper_rs::SegmentCallbackData| {
-                                accumulated_text.push_str(&data.text);
-                                let _ = app_for_segments.emit("stt-partial-result", accumulated_text.trim());
-                            };
-                            match engine.transcribe_streaming(&audio_data, on_segment) {
-                                Ok(text) => {
-                                    tracing::info!("Transcription: {}", text);
-                                    if let Err(e) = app_handle.emit("stt-result", &text) {
-                                        tracing::warn!("Failed to emit transcription result: {}", e);
-                                    }
-
-                                    // Auto-paste if enabled
-                                    if settings.auto_paste && !text.is_empty() {
-                                        if let Err(e) = accessibility::paste_text(&text) {
-                                            tracing::error!("Failed to auto-paste transcription: {}", e);
-                                        }
-                                    }
-
-                                    // Hide overlay after a brief delay to show the result
-                                    let app_for_hide = app_handle.clone();
-                                    tauri::async_runtime::spawn(async move {
-                                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                                        let _ = overlay::hide_overlay(&app_for_hide);
-                                    });
-                                }
-                                Err(e) => {
-                                    tracing::error!("Transcription failed: {}", e);
-                                    if let Err(emit_err) = app_handle.emit("stt-error", format!("Transcription failed: {}", e)) {
-                                        tracing::warn!("Failed to emit error to UI: {}", emit_err);
-                                    }
-                                    // Hide overlay on error after brief delay
-                                    let app_for_hide = app_handle.clone();
-                                    tauri::async_runtime::spawn(async move {
-                                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                                        let _ = overlay::hide_overlay(&app_for_hide);
-                                    });
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to load Whisper model: {}", e);
-                            if let Err(emit_err) = app_handle.emit("stt-error", format!("Failed to load speech model: {}", e)) {
-                                tracing::warn!("Failed to emit error to UI: {}", emit_err);
-                            }
-                            // Hide overlay on error after brief delay
-                            let app_for_hide = app_handle.clone();
-                            tauri::async_runtime::spawn(async move {
-                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                                let _ = overlay::hide_overlay(&app_for_hide);
-                            });
-                        }
+                        let _ = app_for_levels.emit("stt-audio-level", level);
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                     }
                 });
             }
+            Err(e) => {
+                tracing::error!("Failed to create audio capture: {}", e);
+                if let Err(emit_err) = app_handle.emit("stt-error", format!("Microphone unavailable: {}", e)) {
+                    tracing::warn!("Failed to emit error to UI: {}", emit_err);
+                }
+                abort_dictation(&app_handle);
+            }
         }
+    });
+}
+
+/// Reset recording state and hide the overlay after a startup failure.
+fn abort_dictation(app: &AppHandle) {
+    let state = app.state::<Arc<HotkeyState>>();
+    state.is_recording.store(false, Ordering::SeqCst);
+    unregister_cancel_shortcut(app);
+    let _ = overlay::hide_overlay(app);
+}
+
+/// Cancel an in-progress recording: discard audio, no transcription, no paste.
+fn cancel_dictation(app: &AppHandle) {
+    let state = app.state::<Arc<HotkeyState>>();
+    if state
+        .is_recording
+        .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return; // Nothing to cancel
+    }
+
+    tracing::info!("Dictation cancelled");
+    unregister_cancel_shortcut(app);
+
+    if let Err(e) = app.emit("stt-cancelled", ()) {
+        tracing::warn!("Failed to emit stt-cancelled event: {}", e);
+    }
+    let _ = overlay::hide_overlay(app);
+
+    let state_clone = Arc::clone(&state);
+    tauri::async_runtime::spawn(async move {
+        let mut guard = state_clone.audio_capture.lock().await;
+        if let Some(capture) = guard.take() {
+            let _ = capture.stop();
+        }
+    });
+}
+
+/// Stop the current recording and run transcription + auto-paste.
+/// Safe to call from multiple triggers (toggle press, hold release, silence
+/// auto-stop) - only the first caller proceeds.
+fn stop_and_transcribe(app: &AppHandle) {
+    let state = app.state::<Arc<HotkeyState>>();
+    if state
+        .is_recording
+        .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return; // Already stopped or cancelled
+    }
+
+    unregister_cancel_shortcut(app);
+
+    // Emit event to frontend
+    if let Err(e) = app.emit("stt-recording-stopped", ()) {
+        tracing::warn!("Failed to emit stt-recording-stopped event: {}", e);
+    }
+
+    // Stop capture and transcribe in background
+    let app_handle = app.clone();
+    let state_clone = Arc::clone(&state);
+    tauri::async_runtime::spawn(async move {
+        let audio_data = {
+            let mut guard = state_clone.audio_capture.lock().await;
+            if let Some(capture) = guard.take() {
+                match capture.stop() {
+                    Ok(data) => data,
+                    Err(e) => {
+                        tracing::error!("Failed to stop capture: {}", e);
+                        if let Err(emit_err) = app_handle.emit("stt-error", format!("Recording error: {}", e)) {
+                            tracing::warn!("Failed to emit error to UI: {}", emit_err);
+                        }
+                        hide_overlay_after_delay(&app_handle);
+                        return;
+                    }
+                }
+            } else {
+                Vec::new()
+            }
+        };
+
+        if audio_data.is_empty() {
+            tracing::warn!("No audio data captured");
+            if let Err(e) = app_handle.emit("stt-error", "No audio captured. Please check microphone permissions.") {
+                tracing::warn!("Failed to emit error to UI: {}", e);
+            }
+            hide_overlay_after_delay(&app_handle);
+            return;
+        }
+
+        tracing::info!("Captured {} audio samples, transcribing...", audio_data.len());
+        if let Err(e) = app_handle.emit("stt-transcribing", ()) {
+            tracing::warn!("Failed to emit stt-transcribing event: {}", e);
+        }
+
+        // Get model path from settings
+        let settings = match get_settings() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("Failed to load settings for transcription, using defaults: {}", e);
+                crate::commands::settings::AppSettings::default()
+            }
+        };
+        let models_dir = match dirs::data_dir() {
+            Some(dir) => dir.join("com.blahcubed.app").join("models").join("stt"),
+            None => {
+                tracing::error!("Could not determine data directory");
+                if let Err(e) = app_handle.emit("stt-error", "Could not find application data directory") {
+                    tracing::warn!("Failed to emit error to UI: {}", e);
+                }
+                hide_overlay_after_delay(&app_handle);
+                return;
+            }
+        };
+        let model_path = models_dir.join(&settings.stt_model);
+
+        if !model_path.exists() {
+            let error_msg = format!("Model not found: {}. Please download it from the Models tab.", settings.stt_model);
+            if let Err(e) = app_handle.emit("stt-error", &error_msg) {
+                tracing::warn!("Failed to emit error to UI: {}", e);
+            }
+            hide_overlay_after_delay(&app_handle);
+            return;
+        }
+
+        // Transcribe - use to_string_lossy() to safely handle non-UTF8 paths.
+        // The engine is cached across dictations to avoid reloading the model.
+        let model_path_str = model_path.to_string_lossy();
+        match crate::engines::whisper::get_or_load_cached(&model_path_str) {
+            Ok(engine) => {
+                let app_for_segments = app_handle.clone();
+                let mut accumulated_text = String::new();
+                let on_segment = move |data: whisper_rs::SegmentCallbackData| {
+                    accumulated_text.push_str(&data.text);
+                    let _ = app_for_segments.emit("stt-partial-result", accumulated_text.trim());
+                };
+                match engine.transcribe_streaming(&audio_data, on_segment) {
+                    Ok(text) => {
+                        tracing::info!("Transcription: {}", text);
+                        if let Err(e) = app_handle.emit("stt-result", &text) {
+                            tracing::warn!("Failed to emit transcription result: {}", e);
+                        }
+
+                        // Auto-paste if enabled
+                        if settings.auto_paste && !text.is_empty() {
+                            if let Err(e) = accessibility::paste_text(&text) {
+                                tracing::error!("Failed to auto-paste transcription: {}", e);
+                                let msg = "Auto-paste failed - the text is in your clipboard, press Cmd+V to paste. Check Accessibility permission for Blah³ in System Settings.";
+                                if let Err(emit_err) = app_handle.emit("stt-error", msg) {
+                                    tracing::warn!("Failed to emit paste error to UI: {}", emit_err);
+                                }
+                            }
+                        }
+
+                        hide_overlay_after_delay(&app_handle);
+                    }
+                    Err(e) => {
+                        tracing::error!("Transcription failed: {}", e);
+                        if let Err(emit_err) = app_handle.emit("stt-error", format!("Transcription failed: {}", e)) {
+                            tracing::warn!("Failed to emit error to UI: {}", emit_err);
+                        }
+                        hide_overlay_after_delay(&app_handle);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to load Whisper model: {}", e);
+                if let Err(emit_err) = app_handle.emit("stt-error", format!("Failed to load speech model: {}", e)) {
+                    tracing::warn!("Failed to emit error to UI: {}", emit_err);
+                }
+                hide_overlay_after_delay(&app_handle);
+            }
+        }
+    });
+}
+
+/// Hide the dictation overlay after a brief delay (so results/errors stay visible).
+fn hide_overlay_after_delay(app: &AppHandle) {
+    let app_for_hide = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        let _ = overlay::hide_overlay(&app_for_hide);
+    });
+}
+
+fn cancel_shortcut() -> Shortcut {
+    Shortcut::new(None, Code::Escape)
+}
+
+/// Register a global Escape shortcut for the duration of a recording so the
+/// user can bail out without transcribing/pasting.
+fn register_cancel_shortcut(app: &AppHandle) {
+    let result = app
+        .global_shortcut()
+        .on_shortcut(cancel_shortcut(), |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                cancel_dictation(app);
+            }
+        });
+    if let Err(e) = result {
+        // Non-fatal: recording still works, just no Escape-to-cancel
+        tracing::warn!("Failed to register Escape cancel shortcut: {}", e);
+    }
+}
+
+/// Release the global Escape shortcut once recording ends.
+fn unregister_cancel_shortcut(app: &AppHandle) {
+    if let Err(e) = app.global_shortcut().unregister(cancel_shortcut()) {
+        tracing::debug!("Failed to unregister Escape cancel shortcut: {}", e);
     }
 }
 

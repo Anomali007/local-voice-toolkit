@@ -278,7 +278,9 @@ export default function DictationOverlay() {
         {/* Bottom: Transcript area */}
         <div className="px-4 py-2.5 border-t border-white/5 min-h-[40px] max-h-[72px]">
           {state === "recording" && (
-            <p className="text-xs text-white/40 italic">Listening...</p>
+            <p className="text-xs text-white/40 italic">
+              Listening... tap hotkey or pause to finish · Esc to cancel
+            </p>
           )}
           {state === "transcribing" && (
             partialResult ? (
