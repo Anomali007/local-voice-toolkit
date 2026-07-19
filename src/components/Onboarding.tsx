@@ -485,12 +485,12 @@ function HotkeysStep({ onNext, onBack }: { onNext: () => void; onBack: () => voi
 
       <div className="space-y-4 mb-8">
         <HotkeyCard
-          keys={["⌘", "⇧", "D"]}
+          keys={["right ⌥"]}
           title="Dictation"
-          description="Hold to record, release to transcribe. Text is automatically pasted."
+          description="Tap to start, tap again to stop — or hold to talk. Text is automatically pasted."
         />
         <HotkeyCard
-          keys={["⌘", "⇧", "S"]}
+          keys={["⌥", "S"]}
           title="Read Aloud"
           description="Select text anywhere, then press to hear it spoken."
         />

@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import App from './App';
 
 const mockSettings = {
-  stt_hotkey: 'Option+D',
+  stt_hotkey: 'RightOption',
   tts_hotkey: 'Option+S',
   stt_model: 'ggml-base.en.bin',
   tts_voice: 'af_heart',

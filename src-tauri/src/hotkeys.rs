@@ -12,7 +12,7 @@ use crate::overlay;
 /// A key release faster than this is treated as a "tap" (toggle mode: keep
 /// recording until the hotkey is pressed again, silence auto-stops, or Escape
 /// cancels). A slower release is treated as push-to-talk (stop on release).
-const HOLD_THRESHOLD_MS: u128 = 500;
+pub(crate) const HOLD_THRESHOLD_MS: u128 = 500;
 
 /// Shared state for tracking recording status
 pub struct HotkeyState {
@@ -41,20 +41,31 @@ fn register_hotkeys_internal(app: &AppHandle) -> Result<(), Box<dyn std::error::
         }
     };
 
-    // Parse hotkeys from settings or use defaults
-    let stt_shortcut = parse_shortcut(&settings.stt_hotkey)
-        .unwrap_or_else(|| Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyD));
+    // The dictation trigger is either the bare right-Option key (native
+    // event-tap monitor; accelerators can't express a lone modifier) or a
+    // regular accelerator shortcut.
+    let use_right_option = settings
+        .stt_hotkey
+        .trim()
+        .eq_ignore_ascii_case(crate::right_option::RIGHT_OPTION_HOTKEY);
+    crate::right_option::set_enabled(app, use_right_option);
 
     let tts_shortcut = parse_shortcut(&settings.tts_hotkey)
         .unwrap_or_else(|| Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyS));
-
-    tracing::info!("Registering STT hotkey: {:?}", stt_shortcut);
     tracing::info!("Registering TTS hotkey: {:?}", tts_shortcut);
 
-    // on_shortcut both sets up the handler AND registers the shortcut
-    app.global_shortcut().on_shortcut(stt_shortcut, move |app, shortcut, event| {
-        handle_stt_shortcut(app, shortcut, event.state);
-    })?;
+    if !use_right_option {
+        let stt_shortcut = parse_shortcut(&settings.stt_hotkey)
+            .unwrap_or_else(|| Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyD));
+        tracing::info!("Registering STT hotkey: {:?}", stt_shortcut);
+
+        // on_shortcut both sets up the handler AND registers the shortcut
+        app.global_shortcut().on_shortcut(stt_shortcut, move |app, shortcut, event| {
+            handle_stt_shortcut(app, shortcut, event.state);
+        })?;
+    } else {
+        tracing::info!("STT trigger: right-Option key (native monitor)");
+    }
 
     app.global_shortcut().on_shortcut(tts_shortcut, move |app, shortcut, event| {
         handle_tts_shortcut(app, shortcut, event.state);
@@ -133,7 +144,7 @@ fn handle_stt_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutSta
 
 /// Begin a dictation session: show overlay, start capture, arm Escape-to-cancel.
 /// Caller must have already flipped `is_recording` false -> true.
-fn start_dictation(app: &AppHandle) {
+pub(crate) fn start_dictation(app: &AppHandle) {
     let state = app.state::<Arc<HotkeyState>>();
 
     if let Ok(mut guard) = state.started_at.lock() {
@@ -236,7 +247,7 @@ fn abort_dictation(app: &AppHandle) {
 }
 
 /// Cancel an in-progress recording: discard audio, no transcription, no paste.
-fn cancel_dictation(app: &AppHandle) {
+pub(crate) fn cancel_dictation(app: &AppHandle) {
     let state = app.state::<Arc<HotkeyState>>();
     if state
         .is_recording
@@ -266,7 +277,7 @@ fn cancel_dictation(app: &AppHandle) {
 /// Stop the current recording and run transcription + auto-paste.
 /// Safe to call from multiple triggers (toggle press, hold release, silence
 /// auto-stop) - only the first caller proceeds.
-fn stop_and_transcribe(app: &AppHandle) {
+pub(crate) fn stop_and_transcribe(app: &AppHandle) {
     let state = app.state::<Arc<HotkeyState>>();
     if state
         .is_recording

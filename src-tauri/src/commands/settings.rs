@@ -40,7 +40,7 @@ fn default_silence_duration() -> f32 {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            stt_hotkey: "Option+D".to_string(),
+            stt_hotkey: crate::right_option::RIGHT_OPTION_HOTKEY.to_string(),
             tts_hotkey: "Option+S".to_string(),
             stt_model: "ggml-base.en.bin".to_string(),
             tts_voice: "af_heart".to_string(),

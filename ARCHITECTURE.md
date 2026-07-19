@@ -22,7 +22,7 @@ A single, lightweight, open-source macOS app that replaces SuperWhisper, FluidVo
 | **Tauri v2 + React** | ✅ Complete | Full app scaffolding with Tailwind CSS |
 | **STT (whisper-rs)** | ✅ Working | Tap-to-toggle or hold-to-record transcription with auto-paste, Esc to cancel |
 | **TTS (kokoro-tiny)** | ✅ Working | Real TTS synthesis with 11 voices, speed control |
-| **Global Hotkeys** | ✅ Working | ⌘+⇧+D (dictation), ⌘+⇧+S (read aloud) |
+| **Global Hotkeys** | ✅ Working | right-⌥ alone (dictation, native event tap), ⌥+S (read aloud) |
 | **Audio Capture** | ✅ Working | 16kHz mono via cpal |
 | **Audio Playback** | ✅ Working | Via rodio |
 | **Model Manager** | ✅ Working | Download/delete with progress UI |
