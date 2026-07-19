@@ -65,6 +65,30 @@ pub fn run() {
                 tracing::info!("Global hotkeys registered successfully");
             }
 
+            // Preload the configured Whisper model in the background so the
+            // first dictation doesn't pay the multi-second model-load cost.
+            std::thread::spawn(|| {
+                let settings = commands::settings::get_settings().unwrap_or_default();
+                if let Some(dir) = dirs::data_dir() {
+                    let model_path = dir
+                        .join("com.blahcubed.app")
+                        .join("models")
+                        .join("stt")
+                        .join(&settings.stt_model);
+                    if model_path.exists() {
+                        match engines::whisper::get_or_load_cached(&model_path.to_string_lossy()) {
+                            Ok(_) => tracing::info!("Whisper model preloaded"),
+                            Err(e) => tracing::warn!("Whisper model preload failed: {}", e),
+                        }
+                    } else {
+                        tracing::info!(
+                            "STT model {} not downloaded yet - skipping preload",
+                            settings.stt_model
+                        );
+                    }
+                }
+            });
+
             // Show main window on startup (for development)
             #[cfg(debug_assertions)]
             if let Some(window) = app.get_webview_window("main") {
@@ -72,6 +96,17 @@ pub fn run() {
             }
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Blah³ is a menu-bar app: closing the main window hides it so the
+            // tray "Show Blah³" item keeps working (destroying the window
+            // would leave the tray pointing at nothing until relaunch).
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::stt::start_recording,
