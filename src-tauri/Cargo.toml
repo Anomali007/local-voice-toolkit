@@ -39,6 +39,7 @@ hound = "3.5"
 
 # macOS native
 core-foundation = "0.10"
+core-graphics = "0.24"
 
 # Utilities
 reqwest = { version = "0.12", features = ["stream"] }

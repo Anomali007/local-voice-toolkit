@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Onboarding permission cards show live granted/not-granted status and hide button when granted
 - Settings panel permission rows show green "Granted" or red "Not Granted" badges
 - Dictation hotkey is now hybrid: tap to start / tap again to stop, or hold push-to-talk style and release to stop
+- Right Option key alone is the default dictation trigger (Fluid Voice style), via a native listen-only CGEventTap; configurable back to any accelerator in Settings. Option+letter combos are suppressed (they cancel/ignore the gesture instead of dictating)
 - Silence auto-stop now applies to hotkey dictation (was panel-only) so tap-started dictation finishes hands-free
 - Whisper model is cached between dictations and preloaded at launch instead of reloading from disk every time
 - Closing the main window hides it (tray "Show Blah³" keeps working); quit from the tray menu

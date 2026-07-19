@@ -217,10 +217,25 @@ export default function SettingsPanel() {
         <h2 className="text-lg font-semibold text-slate-200 mb-3">Keyboard Shortcuts</h2>
         <div className="space-y-3">
           <SettingRow label="Dictation Hotkey">
-            <HotkeyRecorder
-              value={settings.stt_hotkey}
-              onChange={(value) => updateSetting("stt_hotkey", value)}
-            />
+            <div className="flex flex-col items-end gap-2">
+              <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.stt_hotkey === "RightOption"}
+                  onChange={(e) =>
+                    updateSetting("stt_hotkey", e.target.checked ? "RightOption" : "Option+D")
+                  }
+                  className="accent-sky-500"
+                />
+                Right ⌥ key alone (tap or hold)
+              </label>
+              {settings.stt_hotkey !== "RightOption" && (
+                <HotkeyRecorder
+                  value={settings.stt_hotkey}
+                  onChange={(value) => updateSetting("stt_hotkey", value)}
+                />
+              )}
+            </div>
           </SettingRow>
           <SettingRow label="Read Aloud Hotkey">
             <HotkeyRecorder

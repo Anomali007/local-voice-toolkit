@@ -5,6 +5,7 @@ mod engines;
 mod hotkeys;
 mod models;
 mod overlay;
+mod right_option;
 
 use std::sync::Arc;
 
