@@ -1,9 +1,37 @@
 use anyhow::{anyhow, Result};
+use std::sync::{Arc, Mutex, OnceLock};
 use whisper_rs::{
     FullParams, SamplingStrategy, SegmentCallbackData, WhisperContext, WhisperContextParameters,
 };
 
 use super::{ModelInfo, SpeechToText};
+
+/// (model path, loaded engine) pair kept alive between dictations.
+type CachedEngine = Option<(String, Arc<WhisperEngine>)>;
+
+/// Process-wide cache of the loaded Whisper model, keyed by model path.
+/// Loading a model (especially with CoreML compilation) can take seconds,
+/// so we keep the last-used engine alive across dictations.
+static ENGINE_CACHE: OnceLock<Mutex<CachedEngine>> = OnceLock::new();
+
+/// Get the cached engine for `model_path`, loading (and caching) it if needed.
+/// Switching models replaces the cached engine.
+pub fn get_or_load_cached(model_path: &str) -> Result<Arc<WhisperEngine>> {
+    let cache = ENGINE_CACHE.get_or_init(|| Mutex::new(None));
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if let Some((cached_path, engine)) = guard.as_ref() {
+        if cached_path == model_path {
+            return Ok(Arc::clone(engine));
+        }
+    }
+
+    let engine = Arc::new(WhisperEngine::new(model_path)?);
+    *guard = Some((model_path.to_string(), Arc::clone(&engine)));
+    Ok(engine)
+}
 
 pub struct WhisperEngine {
     ctx: WhisperContext,
