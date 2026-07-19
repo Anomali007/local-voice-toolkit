@@ -63,6 +63,11 @@ export default function StatusIndicator() {
       });
       unlisteners.push(unlisten5);
 
+      const unlistenCancelled = await listen("stt-cancelled", () => {
+        setStatus("idle");
+      });
+      unlisteners.push(unlistenCancelled);
+
       // TTS events
       const unlisten6 = await listen("tts-started", () => {
         setStatus("speaking");
