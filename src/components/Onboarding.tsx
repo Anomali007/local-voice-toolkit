@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-shell";
 import { usePermissions } from "../hooks/usePermissions";
 
 type Step = "welcome" | "permissions" | "models" | "hotkeys" | "complete";

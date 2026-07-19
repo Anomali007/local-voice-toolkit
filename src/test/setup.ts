@@ -17,3 +17,13 @@ vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
   unregister: vi.fn(),
   isRegistered: vi.fn(),
 }));
+
+vi.mock('@tauri-apps/plugin-autostart', () => ({
+  enable: vi.fn(async () => undefined),
+  disable: vi.fn(async () => undefined),
+  isEnabled: vi.fn(async () => false),
+}));
+
+vi.mock('@tauri-apps/plugin-shell', () => ({
+  open: vi.fn(async () => undefined),
+}));
