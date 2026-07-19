@@ -3,7 +3,6 @@ use std::sync::{atomic::{AtomicBool, Ordering}, Mutex, OnceLock};
 
 use crate::audio::capture::{AudioCapture, SilenceConfig};
 use crate::commands::settings::get_settings;
-use crate::engines::whisper::WhisperEngine;
 
 // Global state for recording
 static RECORDING_STATE: OnceLock<RecordingState> = OnceLock::new();
@@ -149,7 +148,7 @@ pub async fn transcribe_audio(
 
     let start = std::time::Instant::now();
 
-    let engine = WhisperEngine::new(&model_path)
+    let engine = crate::engines::whisper::get_or_load_cached(&model_path)
         .map_err(|e| format!("Failed to load Whisper model '{}': {}", model_path, e))?;
     let text = engine.transcribe(&audio_data)
         .map_err(|e| format!("Transcription failed: {}", e))?;
