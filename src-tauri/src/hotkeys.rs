@@ -100,6 +100,28 @@ struct SttRecordingStartedPayload {
     target_app: Option<FrontmostAppInfo>,
 }
 
+/// Payload for stt-permission-error events (actionable permission toasts)
+#[derive(Clone, serde::Serialize)]
+struct SttPermissionErrorPayload {
+    /// "microphone" | "accessibility"
+    kind: String,
+    message: String,
+}
+
+/// Emit a structured permission error the frontend can render with an
+/// "Open Settings" action (falls back to a plain stt-error string too).
+fn emit_permission_error(app: &AppHandle, kind: &str, message: &str) {
+    let payload = SttPermissionErrorPayload {
+        kind: kind.to_string(),
+        message: message.to_string(),
+    };
+    if let Err(e) = app.emit("stt-permission-error", payload) {
+        tracing::warn!("Failed to emit stt-permission-error event: {}", e);
+        // Fallback so the user still sees something
+        let _ = app.emit("stt-error", message);
+    }
+}
+
 /// Handle STT (dictation) shortcut.
 /// Hybrid model:
 /// - Tap once to start recording, tap again to stop-and-transcribe.
@@ -146,6 +168,33 @@ fn handle_stt_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutSta
 /// Caller must have already flipped `is_recording` false -> true.
 pub(crate) fn start_dictation(app: &AppHandle) {
     let state = app.state::<Arc<HotkeyState>>();
+
+    // Gate on microphone permission BEFORE opening the overlay so we never
+    // record an empty buffer and fail with a cryptic transcription error.
+    use crate::commands::permissions::{self, MicAuthStatus};
+    match permissions::microphone_status() {
+        MicAuthStatus::Authorized | MicAuthStatus::Unknown => {}
+        MicAuthStatus::NotDetermined => {
+            tracing::info!("Microphone permission not determined - prompting");
+            permissions::prompt_microphone_access();
+            emit_permission_error(
+                app,
+                "microphone",
+                "Blah³ needs microphone access. Respond to the system dialog, then dictate again.",
+            );
+            state.is_recording.store(false, Ordering::SeqCst);
+            return;
+        }
+        MicAuthStatus::Denied | MicAuthStatus::Restricted => {
+            emit_permission_error(
+                app,
+                "microphone",
+                "Microphone access not granted. Enable Blah³ in System Settings → Privacy & Security → Microphone.",
+            );
+            state.is_recording.store(false, Ordering::SeqCst);
+            return;
+        }
+    }
 
     if let Ok(mut guard) = state.started_at.lock() {
         *guard = Some(Instant::now());
@@ -319,7 +368,15 @@ pub(crate) fn stop_and_transcribe(app: &AppHandle) {
 
         if audio_data.is_empty() {
             tracing::warn!("No audio data captured");
-            if let Err(e) = app_handle.emit("stt-error", "No audio captured. Please check microphone permissions.") {
+            if crate::commands::permissions::microphone_status()
+                != crate::commands::permissions::MicAuthStatus::Authorized
+            {
+                emit_permission_error(
+                    &app_handle,
+                    "microphone",
+                    "Microphone access not granted. Enable Blah³ in System Settings → Privacy & Security → Microphone.",
+                );
+            } else if let Err(e) = app_handle.emit("stt-error", "No audio captured. Please check your microphone input device.") {
                 tracing::warn!("Failed to emit error to UI: {}", e);
             }
             hide_overlay_after_delay(&app_handle);
@@ -383,10 +440,13 @@ pub(crate) fn stop_and_transcribe(app: &AppHandle) {
                         if settings.auto_paste && !text.is_empty() {
                             if let Err(e) = accessibility::paste_text(&text) {
                                 tracing::error!("Failed to auto-paste transcription: {}", e);
-                                let msg = "Auto-paste failed - the text is in your clipboard, press Cmd+V to paste. Check Accessibility permission for Blah³ in System Settings.";
-                                if let Err(emit_err) = app_handle.emit("stt-error", msg) {
-                                    tracing::warn!("Failed to emit paste error to UI: {}", emit_err);
-                                }
+                                // Offer the system Accessibility dialog once
+                                crate::commands::permissions::prompt_accessibility_once();
+                                emit_permission_error(
+                                    &app_handle,
+                                    "accessibility",
+                                    "Auto-paste failed - the text is in your clipboard, press Cmd+V to paste. Grant Blah³ Accessibility (and Automation) permission for auto-paste.",
+                                );
                             }
                         }
 

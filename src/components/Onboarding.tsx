@@ -237,7 +237,7 @@ function PermissionsStep({
     <div>
       <h2 className="text-xl font-bold text-white mb-2">Permissions Required</h2>
       <p className="text-slate-400 text-sm mb-6">
-        Blah³ needs two permissions to work properly. Click each button to open System Settings.
+        Blah³ needs two permissions to work properly. Click each button and approve the system dialog.
       </p>
 
       <div className="space-y-4 mb-8">
@@ -245,17 +245,33 @@ function PermissionsStep({
           icon="🎤"
           title="Microphone Access"
           description="Required for speech-to-text dictation"
-          buttonText="Open Microphone Settings"
+          buttonText="Grant Microphone Access"
           granted={permissions?.microphone}
-          onClick={() => openSystemPreferences("Privacy_Microphone")}
+          onClick={async () => {
+            try {
+              const result = await invoke<string>("request_microphone_access");
+              if (result === "denied" || result === "restricted") {
+                openSystemPreferences("Privacy_Microphone");
+              }
+            } catch {
+              openSystemPreferences("Privacy_Microphone");
+            }
+          }}
         />
         <PermissionCard
           icon="♿"
           title="Accessibility Access"
           description="Required to read selected text and paste transcriptions"
-          buttonText="Open Accessibility Settings"
+          buttonText="Grant Accessibility Access"
           granted={permissions?.accessibility}
-          onClick={() => openSystemPreferences("Privacy_Accessibility")}
+          onClick={async () => {
+            try {
+              // Shows the system dialog that offers to open System Settings
+              await invoke<boolean>("request_accessibility_access");
+            } catch {
+              openSystemPreferences("Privacy_Accessibility");
+            }
+          }}
         />
       </div>
 

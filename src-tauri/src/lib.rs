@@ -127,6 +127,8 @@ pub fn run() {
             commands::settings::get_hardware_info,
             commands::permissions::check_permissions,
             commands::permissions::open_system_settings,
+            commands::permissions::request_microphone_access,
+            commands::permissions::request_accessibility_access,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

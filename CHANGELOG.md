@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Proactive permission requests: real system Microphone prompt (AVCaptureDevice) and Accessibility prompt (AXIsProcessTrustedWithOptions) fired from onboarding, before recordings, and by the right-Option monitor; permission error toasts now include an "Open Settings" button
 - Escape key cancels an in-progress dictation without transcribing or pasting
 - Initial Speech-to-Text (STT) engine using whisper-rs with CoreML/Metal acceleration
 - Text-to-Speech (TTS) placeholder using kokoroxide (Kokoro-82M)
@@ -45,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - N/A
 
 ### Fixed
+- Microphone permission indicator reported "Granted" whenever an input device existed; it now reflects the real TCC authorization status
+- Recording start is gated on microphone permission (prompting when undetermined) instead of silently capturing an empty buffer and failing with "Input sample buffer was empty"
+- Dictation panel and floating-pill waveforms were synthetic (random values at animation-frame rate); they are now driven by real RMS levels (~20 fps) from the capture callback and visibly flatline on silence
 - Dictation overlay window was denied all IPC (missing from capabilities), so it never received recording/transcribing/result events
 - Auto-paste no longer permanently clobbers the clipboard: previous text contents are restored after the paste
 - Auto-paste failures now show an error toast (text stays in clipboard for manual Cmd+V) instead of failing silently
