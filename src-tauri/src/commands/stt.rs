@@ -32,11 +32,32 @@ pub struct StopRecordingResult {
 }
 
 #[tauri::command]
-pub async fn start_recording() -> Result<(), String> {
+pub async fn start_recording(app: tauri::AppHandle) -> Result<(), String> {
+    use crate::commands::permissions::{self, MicAuthStatus};
+
     let state = get_recording_state();
 
     if state.is_recording.load(Ordering::SeqCst) {
         return Err("Already recording".to_string());
+    }
+
+    // Gate on microphone permission so we never record an empty buffer
+    match permissions::microphone_status() {
+        MicAuthStatus::Authorized | MicAuthStatus::Unknown => {}
+        MicAuthStatus::NotDetermined => {
+            tracing::info!("Microphone permission not determined - prompting");
+            permissions::prompt_microphone_access();
+            return Err(
+                "Blah³ needs microphone access. Respond to the system dialog, then try again."
+                    .to_string(),
+            );
+        }
+        MicAuthStatus::Denied | MicAuthStatus::Restricted => {
+            return Err(
+                "Microphone access not granted. Enable Blah³ in System Settings → Privacy & Security → Microphone."
+                    .to_string(),
+            );
+        }
     }
 
     tracing::info!("Starting audio recording...");
@@ -68,6 +89,24 @@ pub async fn start_recording() -> Result<(), String> {
 
     state.is_recording.store(true, Ordering::SeqCst);
     tracing::info!("Recording started");
+
+    // Emit real audio levels (~20 fps) so the panel waveform reflects the
+    // actual microphone input instead of synthetic animation.
+    tauri::async_runtime::spawn(async move {
+        use tauri::Emitter;
+        let state = get_recording_state();
+        loop {
+            if !state.is_recording.load(Ordering::SeqCst) {
+                break;
+            }
+            let level = match state.capture.lock() {
+                Ok(guard) => guard.as_ref().map(|c| c.current_level()).unwrap_or(0.0),
+                Err(_) => 0.0,
+            };
+            let _ = app.emit("stt-audio-level", level);
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        }
+    });
 
     Ok(())
 }
@@ -145,6 +184,18 @@ pub async fn transcribe_audio(
         audio_data.len(),
         model_path
     );
+
+    if audio_data.is_empty() {
+        if crate::commands::permissions::microphone_status()
+            != crate::commands::permissions::MicAuthStatus::Authorized
+        {
+            return Err(
+                "Microphone access not granted. Enable Blah³ in System Settings → Privacy & Security → Microphone."
+                    .to_string(),
+            );
+        }
+        return Err("No audio captured. Please check your microphone input device.".to_string());
+    }
 
     let start = std::time::Instant::now();
 

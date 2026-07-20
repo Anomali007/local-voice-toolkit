@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
 
 type OverlayMode = "recording" | "transcribing" | "speaking" | null;
 
@@ -48,22 +49,25 @@ export default function FloatingOverlay({ mode, onStop, silenceProgress = 0 }: F
     };
   }, [mode]);
 
-  // Simulate audio levels for recording mode
+  // Real audio levels from the backend capture callback (~20 fps).
+  // Silence flatlines at 0 - no synthetic animation.
   useEffect(() => {
     if (mode !== "recording") {
       setAudioLevel(0);
       return;
     }
 
-    const interval = setInterval(() => {
-      // Simulate varying audio levels with some smoothing
-      setAudioLevel((prev) => {
-        const target = Math.random() * 0.7 + 0.1;
-        return prev + (target - prev) * 0.3;
-      });
-    }, 50);
+    let unlisten: (() => void) | null = null;
+    listen<number>("stt-audio-level", (event) => {
+      // Normalize: typical speech RMS is 0..0.3
+      setAudioLevel(Math.min((event.payload || 0) / 0.15, 1.0));
+    }).then((fn) => {
+      unlisten = fn;
+    });
 
-    return () => clearInterval(interval);
+    return () => {
+      if (unlisten) unlisten();
+    };
   }, [mode]);
 
   if (!isVisible) return null;
@@ -142,9 +146,9 @@ export default function FloatingOverlay({ mode, onStop, silenceProgress = 0 }: F
           {config.showWaveform && (
             <div className="flex items-center gap-0.5 h-6">
               {[...Array(5)].map((_, i) => {
-                const barLevel = mode === "speaking"
-                  ? Math.sin(Date.now() / 200 + i) * 0.3 + 0.5
-                  : audioLevel * (0.5 + Math.random() * 0.5);
+                // Real level with a slight per-bar falloff; silence stays flat
+                const falloff = [0.6, 0.85, 1.0, 0.85, 0.6][i] ?? 1.0;
+                const barLevel = mode === "speaking" ? 0.6 : audioLevel * falloff;
                 return (
                   <div
                     key={i}

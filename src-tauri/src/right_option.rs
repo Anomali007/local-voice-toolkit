@@ -162,6 +162,12 @@ fn run_event_tap() {
     use std::rc::Rc;
 
     loop {
+        // The tap silently cannot start without Accessibility permission:
+        // surface the system prompt once (not on every retry).
+        if !crate::commands::permissions::accessibility_trusted() {
+            crate::commands::permissions::prompt_accessibility_once();
+        }
+
         let right_down = Cell::new(false);
         let restart = Rc::new(Cell::new(false));
         let restart_cb = Rc::clone(&restart);

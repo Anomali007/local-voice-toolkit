@@ -33,6 +33,6 @@
 
     <!-- Allow Apple Events for accessibility -->
     <key>NSAppleEventsUsageDescription</key>
-    <string>Blah³ uses Apple Events to copy selected text for text-to-speech.</string>
+    <string>Blah³ uses Apple Events to paste dictated text into the active app and to copy selected text for text-to-speech.</string>
 </dict>
 </plist>

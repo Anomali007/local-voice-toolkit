@@ -5,10 +5,25 @@ import FloatingOverlay from "./FloatingOverlay";
 
 type Status = "idle" | "recording" | "transcribing" | "speaking";
 
+interface PermissionError {
+  kind: "microphone" | "accessibility";
+  message: string;
+}
+
 export default function StatusIndicator() {
   const [status, setStatus] = useState<Status>("idle");
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [permissionError, setPermissionError] = useState<PermissionError | null>(null);
+
+  const openPermissionSettings = useCallback(async (kind: string) => {
+    try {
+      await invoke("open_system_settings", { pane: kind });
+    } catch (err) {
+      console.error("Failed to open system settings:", err);
+    }
+    setPermissionError(null);
+  }, []);
 
   // Stop handler for the overlay
   const handleStop = useCallback(async () => {
@@ -68,6 +83,13 @@ export default function StatusIndicator() {
       });
       unlisteners.push(unlistenCancelled);
 
+      const unlistenPermission = await listen<PermissionError>("stt-permission-error", (event) => {
+        setStatus("idle");
+        setPermissionError(event.payload);
+        setTimeout(() => setPermissionError(null), 12000);
+      });
+      unlisteners.push(unlistenPermission);
+
       // TTS events
       const unlisten6 = await listen("tts-started", () => {
         setStatus("speaking");
@@ -115,11 +137,27 @@ export default function StatusIndicator() {
       )}
 
       {/* Error toast notification */}
-      {errorMessage && (
+      {errorMessage && !permissionError && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in">
           <div className="flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg bg-red-500 text-white text-sm font-medium max-w-md">
             <ErrorIcon className="w-5 h-5 flex-shrink-0" />
             <span>{errorMessage}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Permission error toast with actionable button */}
+      {permissionError && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in">
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg bg-red-500 text-white text-sm font-medium max-w-md">
+            <ErrorIcon className="w-5 h-5 flex-shrink-0" />
+            <span>{permissionError.message}</span>
+            <button
+              onClick={() => openPermissionSettings(permissionError.kind)}
+              className="flex-shrink-0 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-semibold transition-colors"
+            >
+              Open Settings
+            </button>
           </div>
         </div>
       )}
