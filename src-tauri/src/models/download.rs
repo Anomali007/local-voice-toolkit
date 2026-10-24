@@ -363,3 +363,25 @@ mod tests {
         assert_eq!(progress_complete.percentage, 100);
     }
 }
+
+/// Real-network check of the Phonon files, into the app's models folder:
+/// `cargo test --lib phonon_real_download -- --ignored --nocapture`
+#[cfg(test)]
+mod real_download {
+    use super::*;
+    use crate::engines::phonon;
+
+    #[tokio::test]
+    #[ignore]
+    async fn phonon_real_download() {
+        let dir = dirs::data_dir().unwrap().join("com.blahcubed.app/models/tts").join(phonon::MODEL_ID);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, size) in phonon::FILES {
+            let dest = dir.join(name);
+            ModelDownloader::new().download(&phonon::file_url(name), &dest, |_| {}).await.unwrap();
+            assert_eq!(std::fs::metadata(&dest).unwrap().len(), size, "{name}");
+            println!("ok {name} {size}");
+        }
+        assert!(phonon::missing_files(&dir).is_empty());
+    }
+}
