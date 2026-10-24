@@ -3,6 +3,7 @@
 pub mod whisper;
 pub mod kokoro;
 pub mod phonon;
+pub mod postprocess;
 pub mod text;
 
 use anyhow::Result;

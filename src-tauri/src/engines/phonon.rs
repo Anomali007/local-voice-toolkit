@@ -15,12 +15,14 @@ pub const MODEL_ID: &str = "phonon-31m-en";
 /// Hugging Face revision the files are pinned to.
 pub const REVISION: &str = "8c64b55ec301728e2d1695bfea87a08a267d0c2d";
 
-/// Files the checkpoint needs, with their exact sizes at `REVISION`.
-pub const FILES: [(&str, u64); 4] = [
-    ("config.json", 2_851),
-    ("tokenizer.json", 277_967),
-    ("model.safetensors", 102_823_920),
-    ("default-voice.safetensors", 256_136),
+/// Files the checkpoint needs, with their exact sizes and SHA-256 at
+/// `REVISION` (LFS hashes from Hugging Face; the two JSON files hashed from
+/// the pinned revision).
+pub const FILES: [(&str, u64, &str); 4] = [
+    ("config.json", 2_851, "7062ea376e6b158543c8abec8e5af67df171c49ad70eb7e2a0fb25c16f265e06"),
+    ("tokenizer.json", 277_967, "691a00068fa7b989f2f3e5ae5daa2d1a5bb319f2d5360deafcfb19a8bb6e7936"),
+    ("model.safetensors", 102_823_920, "8a04cf833cfe69b67c2ec968b2d31244655b9accc84ade9c0ebcc176f2074607"),
+    ("default-voice.safetensors", 256_136, "f739e8c4c76ee7f92e7c94a82002748c8cd22e99582ac49f7b9b94cd63786e18"),
 ];
 
 pub fn file_url(name: &str) -> String {
@@ -28,17 +30,17 @@ pub fn file_url(name: &str) -> String {
 }
 
 pub fn total_size() -> u64 {
-    FILES.iter().map(|(_, size)| size).sum()
+    FILES.iter().map(|(_, size, _)| size).sum()
 }
 
 /// Names of files that are missing or the wrong size.
 pub fn missing_files(model_dir: &Path) -> Vec<&'static str> {
     FILES
         .iter()
-        .filter(|(name, size)| {
+        .filter(|(name, size, _)| {
             std::fs::metadata(model_dir.join(name)).map(|m| m.len() != *size).unwrap_or(true)
         })
-        .map(|(name, _)| *name)
+        .map(|(name, _, _)| *name)
         .collect()
 }
 
@@ -117,7 +119,7 @@ mod tests {
         std::fs::write(dir.path().join("config.json"), b"Entry not found").unwrap();
         assert!(missing_files(dir.path()).contains(&"config.json"));
 
-        for (name, size) in FILES {
+        for (name, size, _) in FILES {
             let f = std::fs::File::create(dir.path().join(name)).unwrap();
             f.set_len(size).unwrap();
         }

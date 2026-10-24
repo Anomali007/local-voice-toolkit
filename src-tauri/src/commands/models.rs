@@ -18,6 +18,10 @@ pub struct ModelInfo {
     pub download_url: String,
     pub status: ModelStatus,
     pub description: String,
+    /// SHA-256 of the downloaded file (empty for multi-file models, which
+    /// list per-file hashes themselves).
+    #[serde(default)]
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -85,20 +89,23 @@ pub async fn download_model(
     // Check if this is a CoreML model (zip file that needs extraction)
     let is_coreml = model_id.ends_with(".mlmodelc") && model.download_url.ends_with(".zip");
 
+    // Every download is checked against a known SHA-256 before it is used.
+    let expected = (!model.sha256.is_empty()).then_some(model.sha256.as_str());
+
     if model_id == phonon::MODEL_ID {
         // Several files into one directory. Files already complete are
         // skipped, so a retry resumes where the last attempt failed.
         std::fs::create_dir_all(&dest_path).map_err(|e| e.to_string())?;
         let total = phonon::total_size();
         let mut done = 0u64;
-        for (name, size) in phonon::FILES {
+        for (name, size, sha256) in phonon::FILES {
             let file_path = dest_path.join(name);
             let complete = std::fs::metadata(&file_path).map(|m| m.len() == size).unwrap_or(false);
             if !complete {
                 let window = window.clone();
                 let id = model_id_for_progress.clone();
                 downloader
-                    .download(&phonon::file_url(name), &file_path, move |p| {
+                    .download(&phonon::file_url(name), &file_path, Some(sha256), move |p| {
                         let downloaded = done + p.downloaded;
                         let progress = DownloadProgress {
                             downloaded,
@@ -122,7 +129,7 @@ pub async fn download_model(
         let zip_path = type_dir.join(format!("{}.zip", model_id));
 
         downloader
-            .download(&model.download_url, &zip_path, move |progress| {
+            .download(&model.download_url, &zip_path, expected, move |progress| {
                 let _ = window.emit("model-download-progress", (&model_id_for_progress, progress));
             })
             .await
@@ -141,7 +148,7 @@ pub async fn download_model(
     } else {
         // Regular file download
         downloader
-            .download(&model.download_url, &dest_path, move |progress| {
+            .download(&model.download_url, &dest_path, expected, move |progress| {
                 let _ = window.emit("model-download-progress", (&model_id_for_progress, progress));
             })
             .await
@@ -242,6 +249,7 @@ mod tests {
             download_url: String::new(),
             status: ModelStatus::Available,
             description: String::new(),
+            sha256: String::new(),
         }
     }
 
@@ -265,7 +273,7 @@ mod tests {
         let m = model(phonon::MODEL_ID, phonon::total_size());
         // An existing directory alone is not enough.
         assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
-        for (name, size) in phonon::FILES {
+        for (name, size, _) in phonon::FILES {
             std::fs::File::create(path.join(name)).unwrap().set_len(size).unwrap();
         }
         assert_eq!(status_on_disk(&m, &path), ModelStatus::Downloaded);

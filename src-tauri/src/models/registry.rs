@@ -3,6 +3,28 @@
 use crate::commands::models::{ModelInfo, ModelStatus, ModelType};
 use crate::models::hardware::{HardwareDetector, Tier};
 
+/// Commit of ggerganov/whisper.cpp on Hugging Face the Whisper files are
+/// pinned to (a branch like `main` can change under us).
+const WHISPER_REVISION: &str = "5359861c739e955e79d9a303bcbc70fb988958b1";
+
+/// SHA-256 of each single-file download (Hugging Face LFS hashes; Kokoro
+/// hashed from its GitHub release). Phonon lists its own per-file hashes.
+fn known_sha256(id: &str) -> &'static str {
+    match id {
+        "ggml-tiny.en.bin" => "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f",
+        "ggml-base.en.bin" => "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+        "ggml-small.en.bin" => "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d",
+        "ggml-medium.en.bin" => "cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356",
+        "ggml-tiny.en-encoder.mlmodelc" => "82b32eef73c94bb0c432a776a047b757d9525c26d84038a15d8798d7c8d1ee58",
+        "ggml-base.en-encoder.mlmodelc" => "8cf860309e2449e2bdc8be834cf838ab2565747ecc8c0ef914ef5975115e192b",
+        "ggml-small.en-encoder.mlmodelc" => "b2ef1c506378b825b4b4341979a93e1656b5d6c129f17114cfb8fb78aabc2f89",
+        "ggml-medium.en-encoder.mlmodelc" => "cdc44fee3c62b5743913e3147ed75f4e8ecfb52dd7a0f0f7387094b406ff0ee6",
+        "kokoro-v1.0.onnx" => "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+        "voices-v1.0.bin" => "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
+        _ => "",
+    }
+}
+
 pub struct ModelRegistry {
     models: Vec<ModelInfo>,
 }
@@ -37,16 +59,16 @@ impl ModelRegistry {
             Tier::Lite => "~1-2s per sentence",
         };
 
-        Self {
-            models: vec![
+        let mut models = vec![
                 ModelInfo {
                     id: "ggml-tiny.en.bin".into(),
                     name: "Whisper Tiny (English)".into(),
                     model_type: ModelType::Stt,
                     size_bytes: 39_000_000,
                     size_display: "39 MB".into(),
-                    download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin".into(),
+                    download_url: format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/ggml-tiny.en.bin"),
                     status: ModelStatus::Available,
+                    sha256: String::new(),
                     description: format!("⚡ Fastest. {}Quick drafts, chat input. {} on {}. Quality: 6/10.", tiny_rec, tiny_speed, chip),
                 },
                 ModelInfo {
@@ -55,8 +77,9 @@ impl ModelRegistry {
                     model_type: ModelType::Stt,
                     size_bytes: 142_000_000,
                     size_display: "142 MB".into(),
-                    download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin".into(),
+                    download_url: format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/ggml-base.en.bin"),
                     status: ModelStatus::Available,
+                    sha256: String::new(),
                     description: format!("{}Best balance for daily use. {} on {}. Quality: 7.5/10.", base_rec, base_speed, chip),
                 },
                 ModelInfo {
@@ -65,8 +88,9 @@ impl ModelRegistry {
                     model_type: ModelType::Stt,
                     size_bytes: 488_000_000,
                     size_display: "488 MB".into(),
-                    download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin".into(),
+                    download_url: format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/ggml-small.en.bin"),
                     status: ModelStatus::Available,
+                    sha256: String::new(),
                     description: format!("{}High accuracy for meetings and notes. {} on {}. Quality: 9/10.", small_rec, small_speed, chip),
                 },
                 ModelInfo {
@@ -75,8 +99,9 @@ impl ModelRegistry {
                     model_type: ModelType::Stt,
                     size_bytes: 1_500_000_000,
                     size_display: "1.5 GB".into(),
-                    download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin".into(),
+                    download_url: format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/ggml-medium.en.bin"),
                     status: ModelStatus::Available,
+                    sha256: String::new(),
                     description: format!("{}Maximum accuracy for transcription and long-form. {} on {}. Quality: 9.5/10.", medium_rec, medium_speed, chip),
                 },
                 ModelInfo {
@@ -85,8 +110,9 @@ impl ModelRegistry {
                     model_type: ModelType::Stt,
                     size_bytes: 26_000_000,
                     size_display: "26 MB".into(),
-                    download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-encoder.mlmodelc.zip".into(),
+                    download_url: format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/ggml-tiny.en-encoder.mlmodelc.zip"),
                     status: ModelStatus::Available,
+                    sha256: String::new(),
                     description: format!("⚡ {} Download alongside Tiny for accelerated performance.", coreml_note),
                 },
                 ModelInfo {
@@ -95,8 +121,9 @@ impl ModelRegistry {
                     model_type: ModelType::Stt,
                     size_bytes: 38_000_000,
                     size_display: "38 MB".into(),
-                    download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-encoder.mlmodelc.zip".into(),
+                    download_url: format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/ggml-base.en-encoder.mlmodelc.zip"),
                     status: ModelStatus::Available,
+                    sha256: String::new(),
                     description: format!("⭐ {} Download with Base for best daily performance.", coreml_note),
                 },
                 ModelInfo {
@@ -105,8 +132,9 @@ impl ModelRegistry {
                     model_type: ModelType::Stt,
                     size_bytes: 130_000_000,
                     size_display: "130 MB".into(),
-                    download_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-encoder.mlmodelc.zip".into(),
+                    download_url: format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/ggml-small.en-encoder.mlmodelc.zip"),
                     status: ModelStatus::Available,
+                    sha256: String::new(),
                     description: format!("🎯 {} High accuracy + fast with CoreML on {}.", coreml_note, chip),
                 },
                 ModelInfo {
@@ -117,6 +145,7 @@ impl ModelRegistry {
                     size_display: "326 MB".into(),
                     download_url: "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx".into(),
                     status: ModelStatus::Available,
+                    sha256: String::new(),
                     description: format!("🗣️ 27 English voices (US and UK). {} on {}. Required for TTS.", tts_speed, chip),
                 },
                 ModelInfo {
@@ -127,6 +156,7 @@ impl ModelRegistry {
                     size_display: "28 MB".into(),
                     download_url: "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin".into(),
                     status: ModelStatus::Available,
+                    sha256: String::new(),
                     description: "Voice style vectors for the Kokoro voices. Required for TTS.".into(),
                 },
                 ModelInfo {
@@ -138,10 +168,14 @@ impl ModelRegistry {
                     // Four files; see engines::phonon::FILES.
                     download_url: crate::engines::phonon::file_url("model.safetensors"),
                     status: ModelStatus::Available,
+                    sha256: String::new(),
                     description: "🎙️ Gradium's 31M-parameter English voice. Smaller and about 2x faster than Kokoro, with clearer numbers and names. One voice. Apache-2.0.".into(),
                 },
-            ],
+            ];
+        for model in &mut models {
+            model.sha256 = known_sha256(&model.id).into();
         }
+        Self { models }
     }
 
     pub fn get_all_models(&self) -> Vec<ModelInfo> {
@@ -315,6 +349,21 @@ mod tests {
                 "Model {} should be hosted on Hugging Face or GitHub releases",
                 model.id
             );
+        }
+    }
+
+    #[test]
+    fn single_file_downloads_are_pinned_and_hashed() {
+        for model in ModelRegistry::new().get_all_models() {
+            if model.id == crate::engines::phonon::MODEL_ID {
+                continue; // per-file hashes in engines::phonon::FILES
+            }
+            assert_eq!(model.sha256.len(), 64, "{} has no SHA-256", model.id);
+            assert!(model.sha256.chars().all(|c| c.is_ascii_hexdigit()), "{}", model.id);
+            assert!(!model.download_url.contains("/resolve/main/"), "{} not pinned", model.id);
+        }
+        for (name, _, sha) in crate::engines::phonon::FILES {
+            assert_eq!(sha.len(), 64, "{name}");
         }
     }
 }

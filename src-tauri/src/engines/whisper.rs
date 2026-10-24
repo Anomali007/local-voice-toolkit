@@ -105,7 +105,7 @@ impl WhisperEngine {
             text.push_str(&segment);
         }
 
-        Ok(crate::dictionary::apply(&strip_non_speech(&text), &dictionary))
+        Ok(crate::engines::postprocess::finalize_with(&text, &dictionary))
     }
 
     /// Transcribe audio with a callback fired as each segment is decoded.
@@ -150,7 +150,7 @@ impl WhisperEngine {
             text.push_str(&segment);
         }
 
-        Ok(crate::dictionary::apply(&strip_non_speech(&text), &dictionary))
+        Ok(crate::engines::postprocess::finalize_with(&text, &dictionary))
     }
 }
 

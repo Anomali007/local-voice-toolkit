@@ -15,10 +15,13 @@ impl ModelDownloader {
         }
     }
 
+    /// Download `url` to `dest`. With `expected_sha256`, the file is hashed
+    /// while streaming and rejected (nothing left at `dest`) on a mismatch.
     pub async fn download<F>(
         &self,
         url: &str,
         dest: &Path,
+        expected_sha256: Option<&str>,
         progress_callback: F,
     ) -> Result<()>
     where
@@ -38,12 +41,14 @@ impl ModelDownloader {
         let part = part_path(dest);
         let mut file = tokio::fs::File::create(&part).await?;
         let mut downloaded: u64 = 0;
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
         let mut stream = response.bytes_stream();
 
         let streamed: Result<()> = async {
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk?;
                 tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await?;
+                sha2::Digest::update(&mut hasher, &chunk);
 
                 downloaded += chunk.len() as u64;
 
@@ -65,7 +70,11 @@ impl ModelDownloader {
         .await;
         drop(file);
 
-        let result = streamed.and_then(|()| check_complete(downloaded, total_size));
+        let digest = sha2::Digest::finalize(hasher);
+        let actual: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
+        let result = streamed
+            .and_then(|()| check_complete(downloaded, total_size))
+            .and_then(|()| check_sha256(&actual, expected_sha256));
         if let Err(e) = result {
             let _ = tokio::fs::remove_file(&part).await;
             return Err(e);
@@ -80,6 +89,7 @@ impl ModelDownloader {
         &self,
         url: &str,
         dest: &Path,
+        expected_sha256: Option<&str>,
         progress_callback: F,
         max_retries: u32,
     ) -> Result<()>
@@ -94,7 +104,7 @@ impl ModelDownloader {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2_u64.pow(attempt))).await;
             }
 
-            match self.download(url, dest, progress_callback.clone()).await {
+            match self.download(url, dest, expected_sha256, progress_callback.clone()).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     tracing::warn!("Download attempt {} failed: {}", attempt + 1, e);
@@ -125,6 +135,16 @@ pub fn part_path(dest: &Path) -> std::path::PathBuf {
     let mut name = dest.file_name().unwrap_or_default().to_os_string();
     name.push(".part");
     dest.with_file_name(name)
+}
+
+/// Compare a hex SHA-256 against the expected one (case-insensitive).
+fn check_sha256(actual: &str, expected: Option<&str>) -> Result<()> {
+    match expected {
+        Some(want) if !want.eq_ignore_ascii_case(actual) => {
+            anyhow::bail!("Checksum mismatch: expected {}, got {}", want, actual)
+        }
+        _ => Ok(()),
+    }
 }
 
 /// A download is complete when it received the advertised length (or, when
@@ -313,7 +333,7 @@ mod tests {
         let url = serve_once("404 Not Found", b"Entry not found", None).await;
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("model.bin");
-        let result = ModelDownloader::new().download(&url, &dest, |_| {}).await;
+        let result = ModelDownloader::new().download(&url, &dest, None, |_| {}).await;
         assert!(result.is_err());
         assert!(!dest.exists(), "error page must not be saved as the model");
         assert!(!part_path(&dest).exists());
@@ -324,10 +344,30 @@ mod tests {
         let url = serve_once("200 OK", b"only part", Some(1000)).await;
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("model.bin");
-        let result = ModelDownloader::new().download(&url, &dest, |_| {}).await;
+        let result = ModelDownloader::new().download(&url, &dest, None, |_| {}).await;
         assert!(result.is_err());
         assert!(!dest.exists());
         assert!(!part_path(&dest).exists());
+    }
+
+    #[tokio::test]
+    async fn test_download_checksum() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+
+        let url = serve_once("200 OK", b"model bytes", None).await;
+        let wrong = "0".repeat(64);
+        let err = ModelDownloader::new().download(&url, &dest, Some(&wrong), |_| {}).await.unwrap_err();
+        assert!(err.to_string().contains("Checksum mismatch"), "{err}");
+        assert!(!dest.exists() && !part_path(&dest).exists());
+
+        let url = serve_once("200 OK", b"model bytes", None).await;
+        let computed = {
+            use sha2::Digest;
+            sha2::Sha256::digest(b"model bytes").iter().map(|b| format!("{:02x}", b)).collect::<String>()
+        };
+        ModelDownloader::new().download(&url, &dest, Some(&computed.to_uppercase()), |_| {}).await.unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"model bytes");
     }
 
     #[tokio::test]
@@ -335,7 +375,7 @@ mod tests {
         let url = serve_once("200 OK", b"model bytes", None).await;
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("model.bin");
-        ModelDownloader::new().download(&url, &dest, |_| {}).await.unwrap();
+        ModelDownloader::new().download(&url, &dest, None, |_| {}).await.unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), b"model bytes");
         assert!(!part_path(&dest).exists());
     }
@@ -370,9 +410,9 @@ mod real_download {
     async fn phonon_real_download() {
         let dir = dirs::data_dir().unwrap().join("com.blahcubed.app/models/tts").join(phonon::MODEL_ID);
         std::fs::create_dir_all(&dir).unwrap();
-        for (name, size) in phonon::FILES {
+        for (name, size, sha) in phonon::FILES {
             let dest = dir.join(name);
-            ModelDownloader::new().download(&phonon::file_url(name), &dest, |_| {}).await.unwrap();
+            ModelDownloader::new().download(&phonon::file_url(name), &dest, Some(sha), |_| {}).await.unwrap();
             assert_eq!(std::fs::metadata(&dest).unwrap().len(), size, "{name}");
             println!("ok {name} {size}");
         }
