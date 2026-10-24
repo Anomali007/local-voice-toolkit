@@ -35,7 +35,8 @@
         "alwaysOnTop": true,
         "visible": false,
         "skipTaskbar": true,
-        "focus": false
+        "focus": false,
+        "acceptFirstMouse": true
       }
     ],
     "security": {
