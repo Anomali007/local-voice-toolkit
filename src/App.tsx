@@ -8,6 +8,7 @@ import ModelManager from "./components/ModelManager";
 import SettingsPanel from "./components/SettingsPanel";
 import StatusIndicator from "./components/StatusIndicator";
 import Onboarding from "./components/Onboarding";
+import Splash from "./components/Splash";
 import { BookIcon, ChipIcon, GearIcon, MicIcon, SpeakerIcon, Spinner } from "./components/ui";
 
 type Tab = "dictation" | "dictionary" | "reader" | "models" | "settings";
@@ -19,6 +20,8 @@ interface AppSettings {
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("dictation");
   const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null);
+  // Launch animation: plays once per app launch (App mounts once per window).
+  const [showSplash, setShowSplash] = useState(true);
 
   useEffect(() => {
     checkOnboardingStatus();
@@ -52,18 +55,26 @@ function App() {
     setShowOnboarding(false);
   };
 
+  const splash = showSplash ? <Splash onDone={() => setShowSplash(false)} /> : null;
+
   // Show loading state while checking onboarding status
   if (showOnboarding === null) {
     return (
       <div className="flex h-screen items-center justify-center bg-canvas">
         <Spinner className="h-6 w-6" />
+        {splash}
       </div>
     );
   }
 
   // Show onboarding if not completed
   if (showOnboarding) {
-    return <Onboarding onComplete={handleOnboardingComplete} />;
+    return (
+      <>
+        <Onboarding onComplete={handleOnboardingComplete} />
+        {splash}
+      </>
+    );
   }
 
   const tabs: { id: Tab; label: string; Icon: (p: { className?: string }) => JSX.Element }[] = [
@@ -78,6 +89,7 @@ function App() {
     <div className="flex h-screen bg-canvas text-fg">
       {/* Global status indicator for hotkey actions */}
       <StatusIndicator />
+      {splash}
 
       {/* Sidebar */}
       <nav
