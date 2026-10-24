@@ -63,6 +63,10 @@ impl WhisperEngine {
         params.set_print_timestamps(false);
         params.set_suppress_blank(true);
         params.set_single_segment(false);
+        let dictionary = crate::dictionary::load();
+        if let Some(prompt) = crate::dictionary::vocabulary_prompt(&dictionary) {
+            params.set_initial_prompt(&prompt.replace('\0', ""));
+        }
 
         let mut state = self
             .ctx
@@ -85,7 +89,7 @@ impl WhisperEngine {
             text.push_str(&segment);
         }
 
-        Ok(text.trim().to_string())
+        Ok(crate::dictionary::apply(text.trim(), &dictionary))
     }
 
     /// Transcribe audio with a callback fired as each segment is decoded.
@@ -103,6 +107,10 @@ impl WhisperEngine {
         params.set_print_timestamps(false);
         params.set_suppress_blank(true);
         params.set_single_segment(false);
+        let dictionary = crate::dictionary::load();
+        if let Some(prompt) = crate::dictionary::vocabulary_prompt(&dictionary) {
+            params.set_initial_prompt(&prompt.replace('\0', ""));
+        }
         params.set_segment_callback_safe_lossy(on_segment);
 
         let mut state = self
@@ -126,7 +134,7 @@ impl WhisperEngine {
             text.push_str(&segment);
         }
 
-        Ok(text.trim().to_string())
+        Ok(crate::dictionary::apply(text.trim(), &dictionary))
     }
 }
 

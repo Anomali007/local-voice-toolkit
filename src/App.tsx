@@ -3,12 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import DictationPanel from "./components/DictationPanel";
 import ScreenReader from "./components/ScreenReader";
+import DictionaryPanel from "./components/DictionaryPanel";
 import ModelManager from "./components/ModelManager";
 import SettingsPanel from "./components/SettingsPanel";
 import StatusIndicator from "./components/StatusIndicator";
 import Onboarding from "./components/Onboarding";
 
-type Tab = "dictation" | "reader" | "models" | "settings";
+type Tab = "dictation" | "dictionary" | "reader" | "models" | "settings";
 
 interface AppSettings {
   onboarding_completed: boolean;
@@ -66,6 +67,7 @@ function App() {
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: "dictation", label: "Dictation", icon: "🎤" },
+    { id: "dictionary", label: "Words", icon: "📚" },
     { id: "reader", label: "Reader", icon: "📖" },
     { id: "models", label: "Models", icon: "🧠" },
     { id: "settings", label: "Settings", icon: "⚙️" },
@@ -106,6 +108,7 @@ function App() {
       {/* Content */}
       <main className="p-6">
         {activeTab === "dictation" && <DictationPanel />}
+        {activeTab === "dictionary" && <DictionaryPanel />}
         {activeTab === "reader" && <ScreenReader />}
         {activeTab === "models" && <ModelManager />}
         {activeTab === "settings" && <SettingsPanel />}

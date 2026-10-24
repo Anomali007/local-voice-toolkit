@@ -1,6 +1,7 @@
 mod accessibility;
 mod audio;
 mod commands;
+mod dictionary;
 mod engines;
 mod hotkeys;
 mod models;
@@ -112,6 +113,11 @@ pub fn run() {
             commands::stt::transcribe_audio,
             commands::stt::is_silence_triggered,
             commands::stt::is_recording,
+            dictionary::get_dictionary,
+            dictionary::save_dictionary,
+            dictionary::preview_dictionary,
+            dictionary::fluidvoice_dictionary_available,
+            dictionary::import_fluidvoice_dictionary,
             commands::tts::speak_text,
             commands::tts::stop_speaking,
             commands::tts::get_voices,
