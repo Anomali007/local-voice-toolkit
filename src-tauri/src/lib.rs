@@ -68,7 +68,7 @@ pub fn run() {
         });
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "blah3=debug,info".into()),
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "blah3=debug,info,ort=warn".into()),
         ))
         .with(tracing_subscriber::fmt::layer())
         .with(log_file.map(|file| {
