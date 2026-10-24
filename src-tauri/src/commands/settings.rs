@@ -36,6 +36,11 @@ pub struct AppSettings {
     /// Nudge from the anchored position, in logical px (right/down positive).
     pub overlay_offset_x: i32,
     pub overlay_offset_y: i32,
+    /// Where the user dragged the read-aloud pill (logical points of the
+    /// monitor it was on). Only used while `reading_overlay_custom` is set.
+    pub reading_overlay_x: i32,
+    pub reading_overlay_y: i32,
+    pub reading_overlay_custom: bool,
 }
 
 fn default_tts_engine() -> String {
@@ -78,6 +83,9 @@ impl Default for AppSettings {
             overlay_click_through: true,
             overlay_offset_x: 0,
             overlay_offset_y: 0,
+            reading_overlay_x: 0,
+            reading_overlay_y: 0,
+            reading_overlay_custom: false,
         }
     }
 }
@@ -86,6 +94,18 @@ impl Default for AppSettings {
 /// yields a clear error.
 fn parse_settings(content: &str) -> Result<AppSettings, String> {
     serde_json::from_str(content).map_err(|e| format!("Failed to parse settings file: {}", e))
+}
+
+/// Read-modify-write the settings file. Used by backend-initiated changes
+/// (the dragged reading-overlay position) so they never go through a stale
+/// copy held by the Settings window.
+pub fn modify_settings(change: impl FnOnce(&mut AppSettings)) -> Result<(), String> {
+    let mut settings = get_settings()?;
+    change(&mut settings);
+    let content = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+    write_atomic(&get_settings_path(), &content)
+        .map_err(|e| format!("Failed to write settings file: {}", e))
 }
 
 /// Write `content` to `path` atomically (temp file in the same directory, then rename).
@@ -111,7 +131,7 @@ pub fn get_settings() -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
-pub fn update_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), String> {
+pub fn update_settings(app: tauri::AppHandle, mut settings: AppSettings) -> Result<(), String> {
     // Reject hotkeys that can't be registered before touching disk.
     crate::hotkeys::validate_hotkey("Dictation hotkey", &settings.stt_hotkey, true)?;
     crate::hotkeys::validate_hotkey("Read aloud hotkey", &settings.tts_hotkey, false)?;
@@ -122,6 +142,14 @@ pub fn update_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(
 
     let previous = get_settings().ok();
     let settings_path = get_settings_path();
+
+    // The dragged pill position is owned by the backend; the Settings window
+    // may hold an older copy, which must not undo a drag.
+    if let Some(p) = &previous {
+        settings.reading_overlay_x = p.reading_overlay_x;
+        settings.reading_overlay_y = p.reading_overlay_y;
+        settings.reading_overlay_custom = p.reading_overlay_custom;
+    }
 
     if let Some(parent) = settings_path.parent() {
         std::fs::create_dir_all(parent)
@@ -246,6 +274,8 @@ mod tests {
         assert_eq!(s.overlay_max_lines, 4);
         assert!(s.overlay_click_through);
         assert_eq!((s.overlay_offset_x, s.overlay_offset_y), (0, 0));
+        assert!(!s.reading_overlay_custom);
+        assert_eq!((s.reading_overlay_x, s.reading_overlay_y), (0, 0));
     }
 
     #[test]

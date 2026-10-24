@@ -258,7 +258,12 @@ export default function DictationOverlay() {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const palette = mode === "reading" ? READING_PALETTE : PALETTES[state];
+  // The read-aloud pill fills the (pill-sized) window and brings its own chrome.
+  if (mode === "reading") {
+    return <ReadingOverlay progress={progress} speed={speed} onSpeedChange={setSpeed} />;
+  }
+
+  const palette = PALETTES[state];
   const clamp = {
     display: "-webkit-box",
     WebkitBoxOrient: "vertical" as const,
@@ -290,10 +295,6 @@ export default function DictationOverlay() {
               WebkitBackdropFilter: "blur(30px) saturate(1.7)",
             }}
           >
-            {mode === "reading" ? (
-              <ReadingOverlay progress={progress} speed={speed} onSpeedChange={setSpeed} />
-            ) : (
-              <>
             {/* Status row */}
             <div className="flex items-center justify-between px-4 pb-1 pt-3">
               <div className="flex items-center gap-2">
@@ -381,8 +382,6 @@ export default function DictationOverlay() {
                 </p>
               )}
             </div>
-              </>
-            )}
           </div>
         </div>
       </div>
@@ -397,9 +396,6 @@ const PALETTES: Record<OverlayState, string> = {
   result: "linear-gradient(90deg, #34e0a1, #22b8f7, #5a8cf0, #34e0a1)",
   error: "linear-gradient(90deg, #ff5d73, #ff3d3d, #c13a8a, #ff5d73)",
 };
-
-/** Reading is the calm sibling of the hot-mic look: cool teal and blue, no warm hues. */
-const READING_PALETTE = "linear-gradient(90deg, #5eead4, #38bdf8, #818cf8, #5eead4)";
 
 const DOTS: Record<OverlayState, string> = {
   recording: "#ff4d6d",

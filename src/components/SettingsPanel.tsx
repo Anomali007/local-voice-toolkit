@@ -155,6 +155,14 @@ export default function SettingsPanel() {
     if (raw.trim() !== "" && Number.isFinite(n)) updateSetting(key, Math.round(n));
   };
 
+  const resetReadingPosition = async () => {
+    try {
+      await invoke("reset_reading_overlay_position");
+    } catch (err) {
+      console.error("Failed to reset reading overlay position:", err);
+    }
+  };
+
   const previewOverlay = async () => {
     try {
       await invoke("preview_overlay");
@@ -354,6 +362,11 @@ export default function SettingsPanel() {
               checked={settings.overlay_click_through}
               onChange={(v) => updateSetting("overlay_click_through", v)}
             />
+          </SettingRow>
+          <SettingRow label="Read-aloud pill" hint="Drag it anywhere while Blah³ reads; it remembers the spot.">
+            <button type="button" onClick={resetReadingPosition} className="btn-secondary">
+              Reset reading overlay position
+            </button>
           </SettingRow>
           <SettingRow label="Preview" hint="Shows the overlay for about 3 seconds.">
             <button type="button" onClick={previewOverlay} className="btn-secondary">

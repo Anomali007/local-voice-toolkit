@@ -12,6 +12,10 @@ vi.mock('@tauri-apps/api/event', () => ({
   emit: vi.fn(),
 }));
 
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: vi.fn(() => ({ startDragging: vi.fn(async () => undefined) })),
+}));
+
 vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
   register: vi.fn(),
   unregister: vi.fn(),
