@@ -173,14 +173,9 @@ export default function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps)
         ref={buttonRef}
         onClick={handleClick}
         className={`
-          relative px-3 py-2 min-w-[160px] text-left
-          bg-slate-800 border rounded text-sm
-          transition-all duration-150
-          ${isRecording
-            ? "border-sky-500 ring-2 ring-sky-500/30"
-            : "border-slate-700 hover:border-slate-600"
-          }
-          ${value ? "text-slate-100" : "text-slate-400"}
+          input relative min-w-[150px] !py-1.5 text-left
+          ${isRecording ? "!shadow-[0_0_0_3px_rgb(var(--c-accent)/0.3),inset_0_0_0_1px_rgb(var(--c-accent))]" : ""}
+          ${value ? "text-fg" : "text-subtle"}
         `}
       >
         <span className="pr-6">{displayValue}</span>
@@ -190,10 +185,8 @@ export default function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps)
       {value && !isRecording && (
         <button
           onClick={handleClear}
-          className="absolute right-2 top-1/2 -translate-y-1/2
-                     w-5 h-5 flex items-center justify-center
-                     text-slate-500 hover:text-slate-300
-                     rounded hover:bg-slate-700 transition-colors"
+          className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center
+                     rounded text-subtle transition-colors hover:bg-line/60 hover:text-fg"
           title="Clear hotkey"
           aria-label="Clear hotkey"
         >
