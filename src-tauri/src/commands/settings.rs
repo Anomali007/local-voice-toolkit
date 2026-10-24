@@ -29,8 +29,10 @@ fn default_tts_engine() -> String {
     "kokoro".to_string()
 }
 
+// Off: dictation runs until the hotkey is pressed again. Pauses to think
+// should not end a recording.
 fn default_silence_enabled() -> bool {
-    true
+    false
 }
 
 fn default_silence_threshold() -> f32 {

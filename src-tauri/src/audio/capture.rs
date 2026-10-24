@@ -40,8 +40,8 @@ pub struct AudioCapture {
     current_level: Arc<AtomicU32>,
     /// Rate of the audio handed to Whisper by `stop()`.
     sample_rate: u32,
-    /// Rate the device actually records at (set when the stream starts).
-    device_rate: Arc<AtomicU32>,
+    /// Rate of the samples in `buffer` (set when the stream starts).
+    buffer_rate: Arc<AtomicU32>,
     silence_config: SilenceConfig,
 }
 
@@ -78,7 +78,7 @@ impl AudioCapture {
             silence_triggered: Arc::new(AtomicBool::new(false)),
             current_level: Arc::new(AtomicU32::new(0)),
             sample_rate: 16000, // Whisper expects 16kHz
-            device_rate: Arc::new(AtomicU32::new(16000)),
+            buffer_rate: Arc::new(AtomicU32::new(16000)),
             silence_config,
         })
     }
@@ -102,7 +102,7 @@ impl AudioCapture {
         let is_recording = Arc::clone(&self.is_recording);
         let silence_triggered = Arc::clone(&self.silence_triggered);
         let current_level = Arc::clone(&self.current_level);
-        let device_rate = Arc::clone(&self.device_rate);
+        let buffer_rate = Arc::clone(&self.buffer_rate);
         let silence_config = self.silence_config.clone();
         let (started_tx, started_rx) = std::sync::mpsc::sync_channel::<Result<()>>(1);
 
@@ -114,7 +114,7 @@ impl AudioCapture {
                 is_recording,
                 silence_triggered,
                 current_level,
-                device_rate,
+                buffer_rate,
                 silence_config,
                 &started_tx,
             );
@@ -157,10 +157,10 @@ impl AudioCapture {
         let buffer = self.buffer.lock()
             .map_err(|e| anyhow!("Failed to acquire audio buffer lock: {}", e))?
             .clone();
-        let device_rate = self.device_rate.load(Ordering::SeqCst);
-        tracing::info!("Captured {} samples at {}Hz", buffer.len(), device_rate);
+        let buffer_rate = self.buffer_rate.load(Ordering::SeqCst);
+        tracing::info!("Captured {} samples at {}Hz", buffer.len(), buffer_rate);
 
-        Ok(convert_rate(&buffer, device_rate, self.sample_rate))
+        Ok(convert_rate(&buffer, buffer_rate, self.sample_rate))
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -174,7 +174,7 @@ impl AudioCapture {
             Ok(buffer) => buffer.clone(),
             Err(_) => return Vec::new(),
         };
-        convert_rate(&buffer, self.device_rate.load(Ordering::SeqCst), self.sample_rate)
+        convert_rate(&buffer, self.buffer_rate.load(Ordering::SeqCst), self.sample_rate)
     }
 }
 
@@ -183,7 +183,7 @@ fn run_capture_loop(
     is_recording: Arc<AtomicBool>,
     silence_triggered: Arc<AtomicBool>,
     current_level: Arc<AtomicU32>,
-    device_rate: Arc<AtomicU32>,
+    buffer_rate: Arc<AtomicU32>,
     silence_config: SilenceConfig,
     started: &std::sync::mpsc::SyncSender<Result<()>>,
 ) -> Result<()> {
@@ -202,7 +202,6 @@ fn run_capture_loop(
     let config: cpal::StreamConfig = supported.into();
     let rate = config.sample_rate.0;
     let channels = config.channels as usize;
-    device_rate.store(rate, Ordering::SeqCst);
     tracing::info!(
         "Using input device: {} ({} Hz, {} ch, {:?})",
         device.name().unwrap_or_default(),
@@ -224,10 +223,17 @@ fn run_capture_loop(
     let recording = Arc::clone(&is_recording);
     let silenced = Arc::clone(&silence_triggered);
 
-    let on_samples = move |mono: Vec<f32>| {
+    // Long dictations: when the device rate is a whole multiple of 16 kHz,
+    // store audio already at the Whisper rate (a third of the memory at
+    // 48 kHz). Otherwise keep device-rate audio and convert in stop().
+    let factor = if rate > 16_000 && rate.is_multiple_of(16_000) { (rate / 16_000) as usize } else { 1 };
+    buffer_rate.store(rate / factor as u32, Ordering::SeqCst);
+    let mut decimator = Decimator::new(factor);
+
+    let mut on_samples = move |mono: Vec<f32>| {
         // Store audio data, and handle errors gracefully
         match buffer.lock() {
-            Ok(mut buf) => buf.extend_from_slice(&mono),
+            Ok(mut buf) => decimator.push(&mono, &mut buf),
             Err(e) => {
                 // Log and continue - don't panic in audio callback
                 tracing::error!("Audio buffer lock poisoned, data lost: {}", e);
@@ -297,6 +303,36 @@ fn run_capture_loop(
     Ok(())
 }
 
+/// Streaming block-average decimator: keeps partial blocks across audio
+/// callbacks so the output matches decimating the whole recording at once.
+struct Decimator {
+    factor: usize,
+    sum: f32,
+    count: usize,
+}
+
+impl Decimator {
+    fn new(factor: usize) -> Self {
+        Self { factor: factor.max(1), sum: 0.0, count: 0 }
+    }
+
+    fn push(&mut self, input: &[f32], out: &mut Vec<f32>) {
+        if self.factor == 1 {
+            out.extend_from_slice(input);
+            return;
+        }
+        for &x in input {
+            self.sum += x;
+            self.count += 1;
+            if self.count == self.factor {
+                out.push(self.sum / self.factor as f32);
+                self.sum = 0.0;
+                self.count = 0;
+            }
+        }
+    }
+}
+
 /// Average interleaved channels down to mono.
 fn downmix(data: &[f32], channels: usize) -> Vec<f32> {
     if channels <= 1 {
@@ -327,6 +363,26 @@ pub fn convert_rate(samples: &[f32], from: u32, to: u32) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streaming_decimation_matches_whole_recording() {
+        let audio: Vec<f32> = (0..48_000).map(|i| ((i * 7919) % 1000) as f32 / 1000.0 - 0.5).collect();
+        let whole = convert_rate(&audio, 48_000, 16_000);
+        // Uneven callback sizes, as the audio device delivers them.
+        let mut d = Decimator::new(3);
+        let mut streamed = Vec::new();
+        let mut rest = &audio[..];
+        for size in [1usize, 7, 512, 1000, 13].iter().cycle() {
+            if rest.is_empty() {
+                break;
+            }
+            let n = (*size).min(rest.len());
+            d.push(&rest[..n], &mut streamed);
+            rest = &rest[n..];
+        }
+        assert_eq!(streamed.len(), whole.len());
+        assert!(streamed.iter().zip(&whole).all(|(a, b)| (a - b).abs() < 1e-5));
+    }
 
     #[test]
     fn downmix_averages_channels() {
@@ -385,10 +441,10 @@ mod real_capture {
         let capture = AudioCapture::with_silence_config(SilenceConfig { enabled: false, ..Default::default() }).unwrap();
         capture.start().expect("stream must start on the default mic");
         std::thread::sleep(std::time::Duration::from_millis(1000));
-        let device_rate = capture.device_rate.load(Ordering::SeqCst);
+        let buffer_rate = capture.buffer_rate.load(Ordering::SeqCst);
         let audio = capture.stop().unwrap();
         let rms = (audio.iter().map(|v| v * v).sum::<f32>() / audio.len().max(1) as f32).sqrt();
-        println!("device {} Hz -> {} samples at 16 kHz, rms {:.5}", device_rate, audio.len(), rms);
+        println!("device {} Hz -> {} samples at 16 kHz, rms {:.5}", buffer_rate, audio.len(), rms);
         assert!((14_000..=18_500).contains(&audio.len()), "{} samples", audio.len());
     }
 }
