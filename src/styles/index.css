@@ -2,14 +2,49 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Design tokens: space-separated RGB so Tailwind can apply alpha. */
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
+  color-scheme: light dark;
+  --c-canvas: 246 246 248;
+  --c-surface: 255 255 255;
+  --c-sunken: 238 238 242;
+  --c-sidebar: 233 233 239;
+  --c-line: 218 218 226;
+  --c-fg: 29 29 33;
+  --c-muted: 99 99 110;
+  --c-subtle: 140 140 152;
+  --c-accent: 84 82 214;
+  --c-accent-fg: 255 255 255;
+  --c-rec: 222 54 44;
+  --c-ok: 28 140 70;
+  --c-warn: 176 98 0;
+  --c-danger: 200 40 40;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-canvas: 28 28 31;
+    --c-surface: 43 43 47;
+    --c-sunken: 33 33 36;
+    --c-sidebar: 37 37 41;
+    --c-line: 66 66 72;
+    --c-fg: 244 244 247;
+    --c-muted: 168 168 180;
+    --c-subtle: 128 128 140;
+    --c-accent: 128 126 255;
+    --c-accent-fg: 18 18 40;
+    --c-rec: 255 82 70;
+    --c-ok: 70 200 120;
+    --c-warn: 240 168 60;
+    --c-danger: 255 110 100;
+  }
+}
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
   font-weight: 400;
-
-  color: #f8fafc;
-  background-color: #0f172a;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -20,29 +55,190 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background-color: rgb(var(--c-canvas));
+  color: rgb(var(--c-fg));
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
 }
 
-/* Custom scrollbar */
+/* Text people may want to copy stays selectable. */
+input,
+textarea,
+.selectable {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+::selection {
+  background: rgb(var(--c-accent) / 0.28);
+}
+
+/* Scrollbars: thin, quiet. */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
 }
-
 ::-webkit-scrollbar-track {
-  background: #1e293b;
+  background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: #475569;
-  border-radius: 4px;
+  background: rgb(var(--c-subtle) / 0.4);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+  background: rgb(var(--c-subtle) / 0.65);
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 
-/* Utility classes */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid rgb(var(--c-accent) / 0.75);
+  outline-offset: 2px;
+}
+
+/* The overlay window is transparent; the page must not paint a background. */
+html.overlay-window,
+html.overlay-window body {
+  background: transparent !important;
+  overflow: hidden;
+}
+
+@layer components {
+  /* Surfaces */
+  .card {
+    @apply rounded-xl bg-surface shadow-card;
+  }
+  .card-list > * + * {
+    border-top: 0.5px solid rgb(var(--c-line));
+  }
+  .row {
+    @apply flex items-center justify-between gap-4 px-4 py-3;
+  }
+
+  /* Type */
+  .page-title {
+    @apply text-[22px] font-semibold tracking-[-0.02em] text-fg;
+  }
+  .page-lede {
+    @apply mt-1 text-[13px] text-muted max-w-[46ch];
+  }
+  .section-title {
+    @apply mb-2 px-1 text-[13px] font-semibold text-fg;
+  }
+  .section-note {
+    @apply mb-2 px-1 -mt-1 text-xs text-muted;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium
+      transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-45;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-accent-fg hover:brightness-110 active:brightness-95;
+  }
+  .btn-secondary {
+    @apply btn bg-sunken text-fg hover:bg-line/60;
+    box-shadow: 0 0 0 0.5px rgb(var(--c-line));
+  }
+  .btn-danger {
+    @apply btn bg-danger/10 text-danger hover:bg-danger/20;
+  }
+  .btn-danger-solid {
+    @apply btn bg-danger text-white hover:brightness-110;
+  }
+  .btn-quiet {
+    @apply btn px-2 text-muted hover:bg-sunken hover:text-fg;
+  }
+  .btn-lg {
+    @apply px-5 py-2.5 text-sm rounded-xl;
+  }
+
+  /* Inputs */
+  .input {
+    @apply w-full rounded-lg bg-sunken px-3 py-2 text-[13px] text-fg placeholder:text-subtle
+      transition-shadow;
+    box-shadow: inset 0 0 0 0.5px rgb(var(--c-line));
+  }
+  .input:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgb(var(--c-accent) / 0.3), inset 0 0 0 1px rgb(var(--c-accent));
+  }
+
+  /* Keycap */
+  .kbd {
+    @apply inline-flex min-w-[1.6rem] items-center justify-center rounded-md bg-surface px-1.5 py-0.5
+      font-sans text-[12px] font-medium text-fg;
+    box-shadow: 0 0 0 0.5px rgb(var(--c-line)), 0 1.5px 0 rgb(var(--c-line));
+  }
+
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium;
+  }
+  .badge-ok {
+    @apply badge bg-ok/15 text-ok;
+  }
+  .badge-warn {
+    @apply badge bg-warn/15 text-warn;
+  }
+  .badge-danger {
+    @apply badge bg-danger/15 text-danger;
+  }
+  .badge-accent {
+    @apply badge bg-accent/15 text-accent;
+  }
+  .badge-neutral {
+    @apply badge bg-sunken text-muted;
+  }
+
+  /* Selectable option tiles (engine, voice) */
+  .tile {
+    @apply rounded-xl bg-surface p-3 text-left transition-shadow;
+    box-shadow: 0 0 0 0.5px rgb(var(--c-line));
+  }
+  .tile:hover {
+    box-shadow: 0 0 0 1px rgb(var(--c-subtle) / 0.6);
+  }
+  .tile[aria-checked="true"],
+  .tile[aria-pressed="true"] {
+    box-shadow: 0 0 0 2px rgb(var(--c-accent));
+    background: rgb(var(--c-accent) / 0.08);
+  }
+
+  /* Alerts */
+  .alert-danger {
+    @apply rounded-lg bg-danger/10 px-3 py-2 text-[13px] text-danger break-words;
+  }
+
+  /* Range slider */
+  input[type="range"] {
+    @apply h-1 w-full cursor-pointer appearance-none rounded-full bg-line;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    @apply h-4 w-4 appearance-none rounded-full bg-white;
+    box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.25), 0 1px 3px rgb(0 0 0 / 0.3);
+  }
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

@@ -1,10 +1,36 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useSTT } from "../hooks/useSTT";
+import { usePermissions } from "../hooks/usePermissions";
 import WaveformViz from "./WaveformViz";
+import {
+  AccessibilityIcon,
+  AlertIcon,
+  CheckIcon,
+  CopyIcon,
+  Keys,
+  MicIcon,
+  Section,
+  Spinner,
+  StopIcon,
+} from "./ui";
+
+interface HotkeySettings {
+  stt_hotkey: string;
+  tts_hotkey: string;
+}
 
 export default function DictationPanel() {
   const { isRecording, isTranscribing, transcript, error, startRecording, stopRecording } = useSTT();
+  const permissions = usePermissions();
+  const [hotkeys, setHotkeys] = useState<HotkeySettings | null>(null);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    invoke<HotkeySettings>("get_settings")
+      .then(setHotkeys)
+      .catch((err) => console.error("Failed to load hotkeys:", err));
+  }, []);
 
   const handleCopy = async () => {
     if (transcript) {
@@ -14,111 +40,164 @@ export default function DictationPanel() {
     }
   };
 
+  const openPane = async (pane: "microphone" | "accessibility") => {
+    try {
+      await invoke("open_system_settings", { pane });
+    } catch (err) {
+      console.error("Failed to open system settings:", err);
+    }
+  };
+
+  const missing = permissions && (!permissions.microphone || !permissions.accessibility);
+  const headline = isRecording
+    ? "Listening…"
+    : isTranscribing
+    ? "Transcribing…"
+    : missing
+    ? "Needs a permission"
+    : "Ready to dictate";
+
   return (
     <div className="space-y-6">
-      {/* Recording Button */}
-      <div className="flex flex-col items-center space-y-4">
-        <button
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={isTranscribing}
-          className={`w-32 h-32 rounded-full flex items-center justify-center transition-all ${
-            isRecording
-              ? "bg-red-500 hover:bg-red-600 animate-pulse"
-              : isTranscribing
-              ? "bg-slate-600 cursor-not-allowed"
-              : "bg-sky-500 hover:bg-sky-600"
-          }`}
-        >
-          {isRecording ? (
-            <StopIcon className="w-12 h-12 text-white" />
-          ) : isTranscribing ? (
-            <SpinnerIcon className="w-12 h-12 text-white animate-spin" />
+      {/* Hero */}
+      <section className="card overflow-hidden">
+        <div className="flex flex-col items-center px-6 pb-6 pt-8 text-center">
+          <h1 className="page-title" aria-live="polite">
+            {headline}
+          </h1>
+
+          {hotkeys ? (
+            <>
+              <div className="mt-5">
+                <Keys hotkey={hotkeys.stt_hotkey} large />
+              </div>
+              <p className="mt-3 max-w-[38ch] text-[13px] text-muted">
+                Tap or hold to talk. Your words are typed wherever the cursor is.
+              </p>
+            </>
           ) : (
-            <MicIcon className="w-12 h-12 text-white" />
+            <p className="mt-3 text-[13px] text-muted">Dictate into any app with a shortcut.</p>
           )}
-        </button>
 
-        <p className="text-slate-400 text-sm">
-          {isRecording
-            ? "Recording... Click to stop"
-            : isTranscribing
-            ? "Transcribing..."
-            : "Click to start recording"}
-        </p>
-      </div>
-
-      {/* Waveform Visualization */}
-      {isRecording && (
-        <div className="bg-slate-800 rounded-lg p-4">
-          <WaveformViz isActive={isRecording} />
-        </div>
-      )}
-
-      {/* Transcript Output */}
-      {transcript && (
-        <div className="bg-slate-800 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-slate-300">Transcript</h3>
-            <button
-              onClick={handleCopy}
-              className="text-xs text-sky-400 hover:text-sky-300 transition-colors"
-            >
-              {copied ? "Copied!" : "Copy"}
-            </button>
+          <div className="mt-6 h-10 w-full max-w-sm">
+            {isRecording ? (
+              <div className="h-10 rounded-lg bg-rec/10 px-3">
+                <WaveformViz isActive={isRecording} />
+              </div>
+            ) : isTranscribing ? (
+              <div className="flex h-10 items-center justify-center">
+                <Spinner />
+              </div>
+            ) : null}
           </div>
-          <p className="text-slate-100 whitespace-pre-wrap">{transcript}</p>
-        </div>
-      )}
 
-      {/* Error Display */}
+          <button
+            onClick={isRecording ? stopRecording : startRecording}
+            disabled={isTranscribing}
+            className={`${isRecording ? "btn-danger-solid" : "btn-secondary"} btn-lg mt-2`}
+          >
+            {isRecording ? (
+              <>
+                <StopIcon className="h-4 w-4" /> Stop recording
+              </>
+            ) : (
+              <>
+                <MicIcon className="h-4 w-4" /> Record from here
+              </>
+            )}
+          </button>
+        </div>
+      </section>
+
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4">
-          <p className="text-red-400 text-sm">{error}</p>
-        </div>
+        <p role="alert" className="alert-danger">
+          {error}
+        </p>
       )}
 
-      {/* Hotkey Hint */}
-      <div className="text-center">
-        <p className="text-xs text-slate-500">
-          Tip: Press <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300">⌘</kbd> +{" "}
-          <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300">⇧</kbd> +{" "}
-          <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300">D</kbd> anywhere to dictate
-        </p>
-      </div>
+      {/* Transcript */}
+      {transcript && (
+        <Section title="Last transcript">
+          <div className="card p-4">
+            <p className="selectable whitespace-pre-wrap text-[14px] leading-relaxed text-fg">{transcript}</p>
+            <div className="mt-3 flex justify-end">
+              <button onClick={handleCopy} className="btn-quiet">
+                {copied ? <CheckIcon className="h-4 w-4 text-ok" /> : <CopyIcon className="h-4 w-4" />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {/* Shortcuts */}
+      <Section title="Shortcuts">
+        <div className="card card-list">
+          <div className="row">
+            <span>Dictate</span>
+            {hotkeys ? <Keys hotkey={hotkeys.stt_hotkey} /> : null}
+          </div>
+          <div className="row">
+            <span>Read selection aloud</span>
+            {hotkeys ? <Keys hotkey={hotkeys.tts_hotkey} /> : null}
+          </div>
+        </div>
+      </Section>
+
+      {/* Permissions */}
+      <Section title="Access">
+        <div className="card card-list">
+          <PermissionLine
+            Icon={MicIcon}
+            label="Microphone"
+            granted={permissions?.microphone}
+            onFix={() => openPane("microphone")}
+          />
+          <PermissionLine
+            Icon={AccessibilityIcon}
+            label="Accessibility, for typing text"
+            granted={permissions?.accessibility}
+            onFix={() => openPane("accessibility")}
+          />
+        </div>
+      </Section>
     </div>
   );
 }
 
-function MicIcon({ className }: { className?: string }) {
+function PermissionLine({
+  Icon,
+  label,
+  granted,
+  onFix,
+}: {
+  Icon: (p: { className?: string }) => JSX.Element;
+  label: string;
+  granted?: boolean;
+  onFix: () => void;
+}) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-      />
-    </svg>
-  );
-}
-
-function StopIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-      <rect x="6" y="6" width="12" height="12" rx="2" />
-    </svg>
-  );
-}
-
-function SpinnerIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-      />
-    </svg>
+    <div className="row">
+      <span className="flex items-center gap-2.5">
+        <Icon className="h-[18px] w-[18px] text-muted" />
+        {label}
+      </span>
+      {granted === undefined ? (
+        <span className="text-xs text-subtle">Checking…</span>
+      ) : granted ? (
+        <span className="badge-ok gap-1">
+          <CheckIcon className="h-3 w-3" /> Allowed
+        </span>
+      ) : (
+        <span className="flex items-center gap-2">
+          <span className="badge-danger gap-1">
+            <AlertIcon className="h-3 w-3" /> Off
+          </span>
+          <button onClick={onFix} className="btn-secondary">
+            Open System Settings
+          </button>
+        </span>
+      )}
+    </div>
   );
 }
