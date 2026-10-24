@@ -297,6 +297,17 @@ fn make_panel(window: &tauri::WebviewWindow) {
         let _: () = msg_send![ns_window, setFloatingPanel: true];
         let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
         let _: () = msg_send![ns_window, setBecomesKeyOnlyIfNeeded: true];
+        // The window server reads "nonactivating" only when a window is
+        // created, so the mask above does not stop a click from activating
+        // Blah³ (which brings the main window forward). This private setter
+        // updates it; guarded so a future macOS without it just skips it.
+        let prevents = objc2::sel!(_setPreventsActivation:);
+        let responds: bool = msg_send![ns_window, respondsToSelector: prevents];
+        if responds {
+            let _: () = msg_send![ns_window, _setPreventsActivation: true];
+        } else {
+            tracing::warn!("Overlay cannot opt out of activation on this macOS");
+        }
     }
     tracing::info!("Dictation overlay is a non-activating panel");
 }
