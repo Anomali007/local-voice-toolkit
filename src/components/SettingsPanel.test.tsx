@@ -110,6 +110,16 @@ describe('SettingsPanel overlay section', () => {
     await vi.waitFor(() => expect(lastSaved().overlay_offset_x).toBe(-12));
   });
 
+  it('Reset reading overlay position invokes the backend reset', async () => {
+    mockBackend();
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await screen.findByText('Overlay');
+    await user.click(screen.getByRole('button', { name: 'Reset reading overlay position' }));
+    expect(invoke).toHaveBeenCalledWith('reset_reading_overlay_position');
+    expect(vi.mocked(invoke).mock.calls.some(([c]) => c === 'update_settings')).toBe(false);
+  });
+
   it('Show preview invokes preview_overlay', async () => {
     mockBackend();
     const user = userEvent.setup();

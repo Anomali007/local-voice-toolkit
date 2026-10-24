@@ -1,10 +1,11 @@
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { userEvent } from '@testing-library/user-event';
 import DictationOverlay, { liveTail, tailChars } from './DictationOverlay';
-import { formatClock, stepSpeed } from './ReadingOverlay';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { formatClock, formatTimes, stepSpeed } from './ReadingOverlay';
 
 type Handler = (event: { payload: unknown }) => void;
 const handlers = new Map<string, Handler>();
@@ -80,20 +81,32 @@ describe('DictationOverlay reading mode', () => {
     await act(async () => {}); // let the settings read settle
   };
 
-  it('switches to reading mode and shows elapsed / remaining', async () => {
+  it('switches to the compact pill and shows one "elapsed / total" time', async () => {
     await startReading();
-    expect(screen.getByText('Reading aloud')).toBeInTheDocument();
+    expect(screen.getByTestId('reading-pill')).toBeInTheDocument();
     expect(screen.getByText('Preparing…')).toBeInTheDocument();
+    expect(screen.queryByText('Reading aloud')).not.toBeInTheDocument();
 
     fire('tts-progress', progress());
-    expect(screen.getByText('0:12')).toBeInTheDocument();
-    expect(screen.getByText('~-0:53')).toBeInTheDocument(); // 65 - 12, estimated
+    expect(screen.getByText('0:12 / ~1:05')).toBeInTheDocument(); // estimated total
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '18');
     expect(screen.getByText('1.3×')).toBeInTheDocument();
     expect(screen.queryByText(/Recording/)).not.toBeInTheDocument();
 
-    fire('tts-progress', progress({ elapsed_s: 65, total_estimated: false }));
-    expect(screen.getByText('-0:00')).toBeInTheDocument();
+    fire('tts-progress', progress({ elapsed_s: 42, total_s: 130, total_estimated: false }));
+    expect(screen.getByText('0:42 / 2:10')).toBeInTheDocument();
+  });
+
+  it('dragging the pill starts a native window drag, but not from a button', async () => {
+    const startDragging = vi.fn(async () => undefined);
+    vi.mocked(getCurrentWindow).mockReturnValue({ startDragging } as never);
+    await startReading();
+    fireEvent.mouseDown(screen.getByTestId('reading-pill'), { button: 0 });
+    expect(startDragging).toHaveBeenCalledTimes(1);
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Faster' }), { button: 0 });
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Stop' }), { button: 0 });
+    fireEvent.mouseDown(screen.getByTestId('reading-pill'), { button: 2 });
+    expect(startDragging).toHaveBeenCalledTimes(1);
   });
 
   it('+ and − call set_tts_speed with the next step', async () => {
@@ -112,7 +125,7 @@ describe('DictationOverlay reading mode', () => {
   it('Stop invokes stop_speaking', async () => {
     const user = userEvent.setup();
     await startReading();
-    await user.click(screen.getByRole('button', { name: /Stop/ }));
+    await user.click(screen.getByRole('button', { name: 'Stop' }));
     expect(invoke).toHaveBeenCalledWith('stop_speaking');
   });
 
@@ -127,12 +140,12 @@ describe('DictationOverlay reading mode', () => {
   it('returns to the dictation face when reading ends or dictation starts', async () => {
     await startReading();
     fire('tts-reading', false);
-    expect(screen.queryByText('Reading aloud')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('reading-pill')).not.toBeInTheDocument();
     fire('tts-reading', true);
-    expect(screen.getByText('Reading aloud')).toBeInTheDocument();
+    expect(screen.getByTestId('reading-pill')).toBeInTheDocument();
     fire('stt-recording-started', { target_app: null });
     await act(async () => {});
-    expect(screen.queryByText('Reading aloud')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('reading-pill')).not.toBeInTheDocument();
   });
 });
 
@@ -144,6 +157,7 @@ describe('ReadingOverlay helpers', () => {
     expect(stepSpeed(1.1, -1)).toBe(1);
     expect(stepSpeed(3, 1)).toBe(3);
     expect(stepSpeed(0.5, -1)).toBe(0.5);
+    expect(formatTimes(null)).toBe('Preparing…');
   });
 });
 
