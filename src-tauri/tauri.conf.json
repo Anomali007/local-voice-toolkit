@@ -10,11 +10,6 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "trayIcon": {
-      "iconPath": "icons/tray-icon.png",
-      "iconAsTemplate": true,
-      "tooltip": "Blah³"
-    },
     "windows": [
       {
         "label": "main",

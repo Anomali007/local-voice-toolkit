@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::engines::phonon;
 use crate::models::{
@@ -63,6 +63,7 @@ pub async fn download_model(
     window: tauri::Window,
 ) -> Result<String, String> {
     tracing::info!("Downloading model: {}", model_id);
+    let app_handle = window.app_handle().clone();
 
     let registry = ModelRegistry::new();
     let model = registry
@@ -148,6 +149,9 @@ pub async fn download_model(
 
         tracing::info!("Model downloaded: {}", model_id);
     }
+
+    // The Voice menu enables Phonon once its files are present.
+    crate::tray::refresh(&app_handle);
 
     Ok(dest_path.to_string_lossy().to_string())
 }

@@ -97,6 +97,22 @@ export function useTTS() {
     }
   }, []);
 
+  const [settingsVersion, setSettingsVersion] = useState(0);
+
+  // Engine or speed changed from the menu bar menu: reload.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    listen("settings-changed", () => setSettingsVersion((v) => v + 1)).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -119,7 +135,7 @@ export function useTTS() {
       await refreshPhononStatus();
     };
     load();
-  }, [loadVoices, refreshPhononStatus]);
+  }, [loadVoices, refreshPhononStatus, settingsVersion]);
 
   const saveSettings = useCallback(async (patch: Record<string, unknown>) => {
     const settings = await invoke<Record<string, unknown>>("get_settings");

@@ -140,6 +140,9 @@ pub fn update_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(
         preload_stt_model(&settings.stt_model);
     }
 
+    // Keep the menu bar menu's checkmarks and hotkey labels current.
+    crate::tray::refresh(&app);
+
     Ok(())
 }
 

@@ -6,12 +6,11 @@ mod hotkeys;
 mod models;
 mod overlay;
 mod right_option;
+mod tray;
 
 use std::sync::Arc;
 
 use tauri::{
-    menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
     Manager,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -36,28 +35,8 @@ pub fn run() {
         ))
         .manage(Arc::new(hotkeys::HotkeyState::default()))
         .setup(|app| {
-            // Create tray menu
-            let show_i = MenuItem::with_id(app, "show", "Show Blah³", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
-
-            // Build tray icon
-            let _tray = TrayIconBuilder::new()
-                .menu(&menu)
-                .tooltip("Blah³ - Voice Toolkit")
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
-                .build(app)?;
+            // Menu bar icon with its menu
+            tray::create(app.handle())?;
 
             // Register global hotkeys
             if let Err(e) = hotkeys::register_hotkeys(app.handle()) {

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import DictationPanel from "./components/DictationPanel";
 import ScreenReader from "./components/ScreenReader";
 import ModelManager from "./components/ModelManager";
@@ -19,6 +20,20 @@ function App() {
 
   useEffect(() => {
     checkOnboardingStatus();
+  }, []);
+
+  // "Settings…" in the menu bar menu opens the window on a given tab.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    listen<Tab>("navigate", (event) => setActiveTab(event.payload)).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   const checkOnboardingStatus = async () => {

@@ -571,7 +571,12 @@ fn handle_tts_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutSta
     if event != ShortcutState::Pressed {
         return;
     }
+    toggle_read_selection(app);
+}
 
+/// Read the current selection aloud, or stop if a reading is in progress.
+/// Shared by the read-aloud hotkey and the menu bar item.
+pub fn toggle_read_selection(app: &AppHandle) {
     if crate::commands::tts::is_speaking() {
         tracing::info!("TTS hotkey pressed while reading - stopping");
         // The reading task sees the stop and emits tts-finished itself.
