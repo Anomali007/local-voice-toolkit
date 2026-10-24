@@ -22,7 +22,9 @@ export default function VoicePreview({ voice, isSelected, onSelect }: VoicePrevi
       }`}
     >
       <div className="flex items-center space-x-2">
-        <span className="text-lg">{voice.gender === "Female" ? "👩" : "👨"}</span>
+        <span className="text-lg">
+          {voice.gender === "Female" ? "👩" : voice.gender === "Male" ? "👨" : "🎙️"}
+        </span>
         <div>
           <p className="font-medium text-sm text-slate-100">{voice.name}</p>
           <p className="text-xs text-slate-400">{voice.language}</p>

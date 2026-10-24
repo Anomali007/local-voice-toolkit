@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { appDataDir, join } from "@tauri-apps/api/path";
 
 interface Voice {
   id: string;
@@ -10,98 +9,137 @@ interface Voice {
   gender: string;
 }
 
+export type TtsEngine = "kokoro" | "phonon";
+
+export const PHONON_MODEL_ID = "phonon-31m-en";
+
+/** "Option+S" -> "⌥S", "CommandOrControl+Shift+S" -> "⌘⇧S" */
+export function formatHotkey(hotkey: string): string {
+  const symbols: Record<string, string> = {
+    command: "⌘",
+    commandorcontrol: "⌘",
+    cmd: "⌘",
+    super: "⌘",
+    control: "⌃",
+    ctrl: "⌃",
+    option: "⌥",
+    alt: "⌥",
+    shift: "⇧",
+  };
+  return hotkey
+    .split("+")
+    .map((part) => symbols[part.trim().toLowerCase()] ?? part.trim().toUpperCase())
+    .join("");
+}
+
 export function useTTS() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [currentText, setCurrentText] = useState<string | null>(null);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [selectedVoice, setSelectedVoice] = useState("af_heart");
+  const [engine, setEngineState] = useState<TtsEngine>("kokoro");
+  const [phononReady, setPhononReady] = useState(false);
+  const [hotkey, setHotkey] = useState("Option+S");
   const [speed, setSpeed] = useState(1.0);
   const [error, setError] = useState<string | null>(null);
 
   // Listen for hotkey events from the backend
   useEffect(() => {
     const unlisteners: (() => void)[] = [];
+    let cancelled = false;
 
     const setupListeners = async () => {
-      // TTS started (via hotkey)
-      const unlisten1 = await listen<string>("tts-started", (event) => {
-        console.log("TTS started via hotkey:", event.payload);
-        setIsSpeaking(true);
-        setCurrentText(event.payload);
-        setError(null);
-      });
-      unlisteners.push(unlisten1);
-
-      // TTS finished
-      const unlisten2 = await listen("tts-finished", () => {
-        console.log("TTS finished");
-        setIsSpeaking(false);
-      });
-      unlisteners.push(unlisten2);
-
-      // TTS error
-      const unlisten3 = await listen<string>("tts-error", (event) => {
-        console.error("TTS error:", event.payload);
-        setError(event.payload);
-        setIsSpeaking(false);
-      });
-      unlisteners.push(unlisten3);
+      const handlers = [
+        // TTS started (via hotkey)
+        await listen<string>("tts-started", (event) => {
+          setIsSpeaking(true);
+          setCurrentText(event.payload);
+          setError(null);
+        }),
+        // TTS finished (playback ended or was stopped)
+        await listen("tts-finished", () => {
+          setIsSpeaking(false);
+        }),
+        await listen<string>("tts-error", (event) => {
+          setError(event.payload);
+          setIsSpeaking(false);
+        }),
+      ];
+      if (cancelled) handlers.forEach((unlisten) => unlisten());
+      else unlisteners.push(...handlers);
     };
 
     setupListeners();
 
     return () => {
+      cancelled = true;
       unlisteners.forEach((unlisten) => unlisten());
     };
   }, []);
 
-  useEffect(() => {
-    loadVoices();
-    loadSettings();
-  }, []);
-
-  const loadVoices = async () => {
+  const loadVoices = useCallback(async (forEngine: TtsEngine) => {
     try {
-      const result = await invoke<Voice[]>("get_voices");
+      const result = await invoke<Voice[]>("get_voices", { engine: forEngine });
       setVoices(result);
+      return result;
     } catch (err) {
       console.error("Failed to load voices:", err);
+      return [];
     }
-  };
+  }, []);
 
-  const loadSettings = async () => {
+  const refreshPhononStatus = useCallback(async () => {
     try {
-      const settings = await invoke<{ tts_voice: string; tts_speed: number }>("get_settings");
-      setSelectedVoice(settings.tts_voice);
-      setSpeed(settings.tts_speed);
-    } catch (err) {
-      console.error("Failed to load settings:", err);
+      const status = await invoke<string>("get_model_status", { modelId: PHONON_MODEL_ID });
+      setPhononReady(status === "downloaded");
+    } catch {
+      setPhononReady(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const settings = await invoke<{
+          tts_voice: string;
+          tts_speed: number;
+          tts_engine?: string;
+          tts_hotkey?: string;
+        }>("get_settings");
+        const savedEngine: TtsEngine = settings.tts_engine === "phonon" ? "phonon" : "kokoro";
+        setEngineState(savedEngine);
+        setSelectedVoice(settings.tts_voice);
+        setSpeed(settings.tts_speed);
+        if (settings.tts_hotkey) setHotkey(settings.tts_hotkey);
+        await loadVoices(savedEngine);
+      } catch (err) {
+        console.error("Failed to load settings:", err);
+        await loadVoices("kokoro");
+      }
+      await refreshPhononStatus();
+    };
+    load();
+  }, [loadVoices, refreshPhononStatus]);
+
+  const saveSettings = useCallback(async (patch: Record<string, unknown>) => {
+    const settings = await invoke<Record<string, unknown>>("get_settings");
+    await invoke("update_settings", { settings: { ...settings, ...patch } });
+  }, []);
 
   const speak = useCallback(
     async (text: string) => {
       try {
         setError(null);
         setIsSpeaking(true);
-
-        const dataDir = await appDataDir();
-        const modelPath = await join(dataDir, "models", "tts", "kokoro-v1.0.onnx");
-
-        await invoke("speak_text", {
-          text,
-          voiceId: selectedVoice,
-          speed,
-          modelPath,
-        });
+        // Resolves when playback finishes or is stopped.
+        await invoke("speak_text", { text, voiceId: selectedVoice, speed, engine });
       } catch (err) {
         setError(String(err));
-        console.error("Failed to speak:", err);
       } finally {
         setIsSpeaking(false);
       }
     },
-    [selectedVoice, speed]
+    [selectedVoice, speed, engine]
   );
 
   const stop = useCallback(async () => {
@@ -113,41 +151,66 @@ export function useTTS() {
     }
   }, []);
 
-  const updateVoice = useCallback(async (voiceId: string) => {
-    setSelectedVoice(voiceId);
-    try {
-      const settings = await invoke<Record<string, unknown>>("get_settings");
-      await invoke("update_settings", {
-        settings: { ...settings, tts_voice: voiceId },
-      });
-    } catch (err) {
-      console.error("Failed to save voice setting:", err);
-    }
-  }, []);
+  const updateVoice = useCallback(
+    async (voiceId: string) => {
+      setSelectedVoice(voiceId);
+      try {
+        await saveSettings({ tts_voice: voiceId });
+      } catch (err) {
+        console.error("Failed to save voice setting:", err);
+      }
+    },
+    [saveSettings]
+  );
 
-  const updateSpeed = useCallback(async (newSpeed: number) => {
-    setSpeed(newSpeed);
-    try {
-      const settings = await invoke<Record<string, unknown>>("get_settings");
-      await invoke("update_settings", {
-        settings: { ...settings, tts_speed: newSpeed },
-      });
-    } catch (err) {
-      console.error("Failed to save speed setting:", err);
-    }
-  }, []);
+  const updateEngine = useCallback(
+    async (next: TtsEngine) => {
+      setEngineState(next);
+      setError(null);
+      const nextVoices = await loadVoices(next);
+      const patch: Record<string, unknown> = { tts_engine: next };
+      // Keep the voice valid for the engine (Phonon has one voice).
+      if (nextVoices.length && !nextVoices.some((v) => v.id === selectedVoice)) {
+        const voice = next === "kokoro" ? "af_heart" : nextVoices[0].id;
+        setSelectedVoice(voice);
+        patch.tts_voice = voice;
+      }
+      try {
+        await saveSettings(patch);
+      } catch (err) {
+        console.error("Failed to save engine setting:", err);
+      }
+      if (next === "phonon") await refreshPhononStatus();
+    },
+    [loadVoices, refreshPhononStatus, saveSettings, selectedVoice]
+  );
+
+  const updateSpeed = useCallback(
+    async (newSpeed: number) => {
+      setSpeed(newSpeed);
+      try {
+        await saveSettings({ tts_speed: newSpeed });
+      } catch (err) {
+        console.error("Failed to save speed setting:", err);
+      }
+    },
+    [saveSettings]
+  );
 
   return {
     isSpeaking,
     currentText,
     voices,
     selectedVoice,
+    engine,
+    phononReady,
+    hotkey,
     speed,
     error,
     speak,
     stop,
     setSelectedVoice: updateVoice,
+    setEngine: updateEngine,
     setSpeed: updateSpeed,
   };
 }
-
