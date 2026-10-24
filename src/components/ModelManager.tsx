@@ -1,7 +1,18 @@
+import { useState } from "react";
 import { useModels } from "../hooks/useModels";
 
 export default function ModelManager() {
-  const { models, downloadProgress, downloadModel, deleteModel, isDownloading } = useModels();
+  const {
+    models,
+    downloadProgress,
+    downloadModel,
+    deleteModel,
+    selectSttModel,
+    activeSttModel,
+    errors,
+    isDownloading,
+  } = useModels();
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
 
   // Separate CoreML acceleration models from regular models
   const sttModels = models.filter((m) => m.model_type === "stt" && !m.id.includes(".mlmodelc"));
@@ -20,8 +31,18 @@ export default function ModelManager() {
               model={model}
               progress={downloadProgress[model.id]}
               onDownload={() => downloadModel(model.id)}
-              onDelete={() => deleteModel(model.id)}
+              onDelete={() => {
+                setConfirmingDelete(null);
+                deleteModel(model.id);
+              }}
               isDownloading={isDownloading(model.id)}
+              error={errors[model.id]}
+              confirming={confirmingDelete === model.id}
+              onRequestDelete={() => setConfirmingDelete(model.id)}
+              onCancelDelete={() => setConfirmingDelete(null)}
+              isActive={model.id === activeSttModel}
+              onUse={() => selectSttModel(model.id)}
+              selectable
             />
           ))}
         </div>
@@ -42,8 +63,15 @@ export default function ModelManager() {
                 model={model}
                 progress={downloadProgress[model.id]}
                 onDownload={() => downloadModel(model.id)}
-                onDelete={() => deleteModel(model.id)}
+                onDelete={() => {
+                setConfirmingDelete(null);
+                deleteModel(model.id);
+              }}
                 isDownloading={isDownloading(model.id)}
+                error={errors[model.id]}
+                confirming={confirmingDelete === model.id}
+                onRequestDelete={() => setConfirmingDelete(model.id)}
+                onCancelDelete={() => setConfirmingDelete(null)}
                 isCoreML={true}
               />
             ))}
@@ -61,8 +89,15 @@ export default function ModelManager() {
               model={model}
               progress={downloadProgress[model.id]}
               onDownload={() => downloadModel(model.id)}
-              onDelete={() => deleteModel(model.id)}
+              onDelete={() => {
+                setConfirmingDelete(null);
+                deleteModel(model.id);
+              }}
               isDownloading={isDownloading(model.id)}
+              error={errors[model.id]}
+              confirming={confirmingDelete === model.id}
+              onRequestDelete={() => setConfirmingDelete(model.id)}
+              onCancelDelete={() => setConfirmingDelete(null)}
             />
           ))}
         </div>
@@ -88,20 +123,47 @@ interface Model {
   status: string;
 }
 
+
 interface ModelCardProps {
   model: Model;
   progress?: number;
   onDownload: () => void;
   onDelete: () => void;
+  onRequestDelete: () => void;
+  onCancelDelete: () => void;
+  confirming: boolean;
+  error?: string;
   isDownloading: boolean;
   isCoreML?: boolean;
+  /** STT model that can be chosen for dictation */
+  selectable?: boolean;
+  isActive?: boolean;
+  onUse?: () => void;
 }
 
-function ModelCard({ model, progress, onDownload, onDelete, isDownloading, isCoreML }: ModelCardProps) {
+function ModelCard({
+  model,
+  progress,
+  onDownload,
+  onDelete,
+  onRequestDelete,
+  onCancelDelete,
+  confirming,
+  error,
+  isDownloading,
+  isCoreML,
+  selectable,
+  isActive,
+  onUse,
+}: ModelCardProps) {
   const isDownloaded = model.status === "downloaded";
 
   return (
-    <div className={`rounded-lg p-4 ${isCoreML ? "bg-purple-900/20 border border-purple-800/30" : "bg-slate-800"}`}>
+    <div
+      className={`rounded-lg p-4 ${
+        isCoreML ? "bg-purple-900/20 border border-purple-800/30" : "bg-slate-800"
+      } ${isActive ? "ring-1 ring-sky-500/60" : ""}`}
+    >
       <div className="flex items-start justify-between">
         <div className="flex-1">
           <div className="flex items-center space-x-2">
@@ -116,12 +178,17 @@ function ModelCard({ model, progress, onDownload, onDelete, isDownloading, isCor
                 Downloaded
               </span>
             )}
+            {isActive && (
+              <span className="px-2 py-0.5 text-xs bg-sky-500/20 text-sky-300 rounded-full">
+                Active
+              </span>
+            )}
           </div>
           <p className="text-sm text-slate-400 mt-1">{model.description}</p>
           <p className="text-xs text-slate-500 mt-1">{model.size_display}</p>
         </div>
 
-        <div className="ml-4">
+        <div className="ml-4 flex items-center gap-2">
           {isDownloading ? (
             <div className="w-20">
               <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
@@ -133,22 +200,66 @@ function ModelCard({ model, progress, onDownload, onDelete, isDownloading, isCor
               <p className="text-xs text-slate-400 text-center mt-1">{progress || 0}%</p>
             </div>
           ) : isDownloaded ? (
-            <button
-              onClick={onDelete}
-              className="px-3 py-1.5 text-sm bg-red-500/10 text-red-400 rounded hover:bg-red-500/20 transition-colors"
-            >
-              Delete
-            </button>
+            <>
+              {selectable && !isActive && (
+                <button
+                  onClick={onUse}
+                  className="px-3 py-1.5 text-sm bg-sky-500 text-white rounded hover:bg-sky-600 transition-colors"
+                >
+                  Use this model
+                </button>
+              )}
+              {!confirming && (
+                <button
+                  onClick={onRequestDelete}
+                  className="px-3 py-1.5 text-sm bg-red-500/10 text-red-400 rounded hover:bg-red-500/20 transition-colors"
+                >
+                  Delete
+                </button>
+              )}
+            </>
           ) : (
             <button
               onClick={onDownload}
               className="px-3 py-1.5 text-sm bg-sky-500 text-white rounded hover:bg-sky-600 transition-colors"
             >
-              Download
+              {error ? "Retry" : "Download"}
             </button>
           )}
         </div>
       </div>
+
+      {confirming && isDownloaded && (
+        <div role="alertdialog" aria-label={`Delete ${model.name}`} className="mt-3 border-t border-slate-700 pt-3">
+          <p className="text-sm text-slate-200">Delete {model.name}? You can download it again later.</p>
+          {isActive && (
+            <p className="text-xs text-amber-400 mt-1">
+              This is your active dictation model. Dictation will fail until you download it again or
+              choose another model.
+            </p>
+          )}
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={onDelete}
+              className="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+            >
+              Confirm delete
+            </button>
+            <button
+              onClick={onCancelDelete}
+              className="px-3 py-1.5 text-sm bg-slate-700 text-slate-200 rounded hover:bg-slate-600 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-red-400 break-words">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

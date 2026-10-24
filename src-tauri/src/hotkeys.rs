@@ -31,8 +31,11 @@ impl Default for HotkeyState {
     }
 }
 
-/// Register all global hotkeys (internal - registers shortcuts and handlers)
-fn register_hotkeys_internal(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+/// Register all global hotkeys. Each shortcut is registered independently so
+/// one conflicting/invalid hotkey doesn't prevent the others from working.
+/// Returns the list of human-readable failures (empty on full success).
+fn register_hotkeys_internal(app: &AppHandle) -> Vec<String> {
+    let mut failures = Vec::new();
     let settings = match get_settings() {
         Ok(s) => s,
         Err(e) => {
@@ -50,47 +53,97 @@ fn register_hotkeys_internal(app: &AppHandle) -> Result<(), Box<dyn std::error::
         .eq_ignore_ascii_case(crate::right_option::RIGHT_OPTION_HOTKEY);
     crate::right_option::set_enabled(app, use_right_option);
 
-    let tts_shortcut = parse_shortcut(&settings.tts_hotkey)
-        .unwrap_or_else(|| Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyS));
-    tracing::info!("Registering TTS hotkey: {:?}", tts_shortcut);
-
-    if !use_right_option {
-        let stt_shortcut = parse_shortcut(&settings.stt_hotkey)
-            .unwrap_or_else(|| Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyD));
-        tracing::info!("Registering STT hotkey: {:?}", stt_shortcut);
-
-        // on_shortcut both sets up the handler AND registers the shortcut
-        app.global_shortcut().on_shortcut(stt_shortcut, move |app, shortcut, event| {
-            handle_stt_shortcut(app, shortcut, event.state);
-        })?;
-    } else {
+    if use_right_option {
         tracing::info!("STT trigger: right-Option key (native monitor)");
+    } else {
+        match parse_shortcut(&settings.stt_hotkey) {
+            Some(stt_shortcut) => {
+                tracing::info!("Registering STT hotkey: {:?}", stt_shortcut);
+                // on_shortcut both sets up the handler AND registers the shortcut
+                if let Err(e) = app.global_shortcut().on_shortcut(stt_shortcut, move |app, shortcut, event| {
+                    handle_stt_shortcut(app, shortcut, event.state);
+                }) {
+                    tracing::error!("Failed to register STT hotkey '{}': {}", settings.stt_hotkey, e);
+                    failures.push(format!("Dictation hotkey '{}' could not be registered: {}", settings.stt_hotkey, e));
+                }
+            }
+            None => {
+                tracing::error!("Invalid STT hotkey '{}'", settings.stt_hotkey);
+                failures.push(format!("Dictation hotkey '{}' is not valid", settings.stt_hotkey));
+            }
+        }
     }
 
-    app.global_shortcut().on_shortcut(tts_shortcut, move |app, shortcut, event| {
-        handle_tts_shortcut(app, shortcut, event.state);
-    })?;
+    match parse_shortcut(&settings.tts_hotkey) {
+        Some(tts_shortcut) => {
+            tracing::info!("Registering TTS hotkey: {:?}", tts_shortcut);
+            if let Err(e) = app.global_shortcut().on_shortcut(tts_shortcut, move |app, shortcut, event| {
+                handle_tts_shortcut(app, shortcut, event.state);
+            }) {
+                tracing::error!("Failed to register TTS hotkey '{}': {}", settings.tts_hotkey, e);
+                failures.push(format!("Read aloud hotkey '{}' could not be registered: {}", settings.tts_hotkey, e));
+            }
+        }
+        None => {
+            tracing::error!("Invalid TTS hotkey '{}'", settings.tts_hotkey);
+            failures.push(format!("Read aloud hotkey '{}' is not valid", settings.tts_hotkey));
+        }
+    }
 
-    Ok(())
+    failures
 }
 
-/// Register all global hotkeys (called at startup)
+/// Register all global hotkeys (called at startup). Failures are logged, not fatal.
 pub fn register_hotkeys(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    register_hotkeys_internal(app)
+    let failures = register_hotkeys_internal(app);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
 }
 
-/// Re-register hotkeys after settings change
-pub fn refresh_hotkeys(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+/// Re-register hotkeys after a hotkey setting changed.
+pub fn refresh_hotkeys(app: &AppHandle) -> Result<(), String> {
     // Unregister all existing shortcuts first
     if let Err(e) = app.global_shortcut().unregister_all() {
         tracing::warn!("Failed to unregister existing hotkeys: {}", e);
     }
     tracing::info!("Unregistered all hotkeys for refresh");
 
-    // Re-register with new settings
-    register_hotkeys_internal(app)?;
+    let failures = register_hotkeys_internal(app);
 
-    tracing::info!("Hotkeys refreshed successfully");
+    // unregister_all also dropped the Escape-cancel shortcut; restore it if a
+    // recording is in flight.
+    if app.state::<Arc<HotkeyState>>().is_recording.load(Ordering::SeqCst) {
+        register_cancel_shortcut(app);
+    }
+
+    if failures.is_empty() {
+        tracing::info!("Hotkeys refreshed successfully");
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+/// Validate a hotkey string from settings. `allow_right_option` permits the
+/// bare right-Option trigger (dictation only).
+pub fn validate_hotkey(label: &str, hotkey: &str, allow_right_option: bool) -> Result<(), String> {
+    let trimmed = hotkey.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{} is not set", label));
+    }
+    if trimmed.eq_ignore_ascii_case(crate::right_option::RIGHT_OPTION_HOTKEY) {
+        return if allow_right_option {
+            Ok(())
+        } else {
+            Err(format!("{} cannot be the Right Option key alone", label))
+        };
+    }
+    if parse_shortcut(trimmed).is_none() {
+        return Err(format!("{} '{}' is not a valid shortcut", label, trimmed));
+    }
     Ok(())
 }
 
@@ -475,9 +528,13 @@ pub(crate) fn stop_and_transcribe(app: &AppHandle) {
 /// Hide the dictation overlay after a brief delay (so results/errors stay visible).
 fn hide_overlay_after_delay(app: &AppHandle) {
     let app_for_hide = app.clone();
+    let generation = overlay::overlay_generation();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        let _ = overlay::hide_overlay(&app_for_hide);
+        // A newer dictation re-showed the overlay while we slept: leave it alone.
+        if overlay::overlay_generation() == generation {
+            let _ = overlay::hide_overlay(&app_for_hide);
+        }
     });
 }
 
@@ -575,14 +632,23 @@ fn handle_tts_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutSta
 }
 
 /// Parse a shortcut string like "CommandOrControl+Shift+D" into a Shortcut
-fn parse_shortcut(shortcut_str: &str) -> Option<Shortcut> {
-    let parts: Vec<&str> = shortcut_str.split('+').collect();
-    if parts.is_empty() {
+/// Returns None for empty input, unknown tokens, or more than one non-modifier key.
+pub(crate) fn parse_shortcut(shortcut_str: &str) -> Option<Shortcut> {
+    if shortcut_str.trim().is_empty() {
         return None;
     }
+    let parts: Vec<&str> = shortcut_str.split('+').collect();
 
     let mut modifiers = Modifiers::empty();
-    let mut code = None;
+    let mut code: Option<Code> = None;
+    // Assigns the key code; a second non-modifier key makes the shortcut invalid.
+    fn set_key(slot: &mut Option<Code>, c: Code) -> Option<()> {
+        if slot.is_some() {
+            return None;
+        }
+        *slot = Some(c);
+        Some(())
+    }
 
     for part in parts {
         let part = part.trim();
@@ -600,63 +666,68 @@ fn parse_shortcut(shortcut_str: &str) -> Option<Shortcut> {
                 modifiers |= Modifiers::ALT;
             }
             // Letters
-            "a" => code = Some(Code::KeyA),
-            "b" => code = Some(Code::KeyB),
-            "c" => code = Some(Code::KeyC),
-            "d" => code = Some(Code::KeyD),
-            "e" => code = Some(Code::KeyE),
-            "f" => code = Some(Code::KeyF),
-            "g" => code = Some(Code::KeyG),
-            "h" => code = Some(Code::KeyH),
-            "i" => code = Some(Code::KeyI),
-            "j" => code = Some(Code::KeyJ),
-            "k" => code = Some(Code::KeyK),
-            "l" => code = Some(Code::KeyL),
-            "m" => code = Some(Code::KeyM),
-            "n" => code = Some(Code::KeyN),
-            "o" => code = Some(Code::KeyO),
-            "p" => code = Some(Code::KeyP),
-            "q" => code = Some(Code::KeyQ),
-            "r" => code = Some(Code::KeyR),
-            "s" => code = Some(Code::KeyS),
-            "t" => code = Some(Code::KeyT),
-            "u" => code = Some(Code::KeyU),
-            "v" => code = Some(Code::KeyV),
-            "w" => code = Some(Code::KeyW),
-            "x" => code = Some(Code::KeyX),
-            "y" => code = Some(Code::KeyY),
-            "z" => code = Some(Code::KeyZ),
+            "a" => set_key(&mut code, Code::KeyA)?,
+            "b" => set_key(&mut code, Code::KeyB)?,
+            "c" => set_key(&mut code, Code::KeyC)?,
+            "d" => set_key(&mut code, Code::KeyD)?,
+            "e" => set_key(&mut code, Code::KeyE)?,
+            "f" => set_key(&mut code, Code::KeyF)?,
+            "g" => set_key(&mut code, Code::KeyG)?,
+            "h" => set_key(&mut code, Code::KeyH)?,
+            "i" => set_key(&mut code, Code::KeyI)?,
+            "j" => set_key(&mut code, Code::KeyJ)?,
+            "k" => set_key(&mut code, Code::KeyK)?,
+            "l" => set_key(&mut code, Code::KeyL)?,
+            "m" => set_key(&mut code, Code::KeyM)?,
+            "n" => set_key(&mut code, Code::KeyN)?,
+            "o" => set_key(&mut code, Code::KeyO)?,
+            "p" => set_key(&mut code, Code::KeyP)?,
+            "q" => set_key(&mut code, Code::KeyQ)?,
+            "r" => set_key(&mut code, Code::KeyR)?,
+            "s" => set_key(&mut code, Code::KeyS)?,
+            "t" => set_key(&mut code, Code::KeyT)?,
+            "u" => set_key(&mut code, Code::KeyU)?,
+            "v" => set_key(&mut code, Code::KeyV)?,
+            "w" => set_key(&mut code, Code::KeyW)?,
+            "x" => set_key(&mut code, Code::KeyX)?,
+            "y" => set_key(&mut code, Code::KeyY)?,
+            "z" => set_key(&mut code, Code::KeyZ)?,
             // Numbers
-            "0" => code = Some(Code::Digit0),
-            "1" => code = Some(Code::Digit1),
-            "2" => code = Some(Code::Digit2),
-            "3" => code = Some(Code::Digit3),
-            "4" => code = Some(Code::Digit4),
-            "5" => code = Some(Code::Digit5),
-            "6" => code = Some(Code::Digit6),
-            "7" => code = Some(Code::Digit7),
-            "8" => code = Some(Code::Digit8),
-            "9" => code = Some(Code::Digit9),
+            "0" => set_key(&mut code, Code::Digit0)?,
+            "1" => set_key(&mut code, Code::Digit1)?,
+            "2" => set_key(&mut code, Code::Digit2)?,
+            "3" => set_key(&mut code, Code::Digit3)?,
+            "4" => set_key(&mut code, Code::Digit4)?,
+            "5" => set_key(&mut code, Code::Digit5)?,
+            "6" => set_key(&mut code, Code::Digit6)?,
+            "7" => set_key(&mut code, Code::Digit7)?,
+            "8" => set_key(&mut code, Code::Digit8)?,
+            "9" => set_key(&mut code, Code::Digit9)?,
             // Function keys
-            "f1" => code = Some(Code::F1),
-            "f2" => code = Some(Code::F2),
-            "f3" => code = Some(Code::F3),
-            "f4" => code = Some(Code::F4),
-            "f5" => code = Some(Code::F5),
-            "f6" => code = Some(Code::F6),
-            "f7" => code = Some(Code::F7),
-            "f8" => code = Some(Code::F8),
-            "f9" => code = Some(Code::F9),
-            "f10" => code = Some(Code::F10),
-            "f11" => code = Some(Code::F11),
-            "f12" => code = Some(Code::F12),
+            "f1" => set_key(&mut code, Code::F1)?,
+            "f2" => set_key(&mut code, Code::F2)?,
+            "f3" => set_key(&mut code, Code::F3)?,
+            "f4" => set_key(&mut code, Code::F4)?,
+            "f5" => set_key(&mut code, Code::F5)?,
+            "f6" => set_key(&mut code, Code::F6)?,
+            "f7" => set_key(&mut code, Code::F7)?,
+            "f8" => set_key(&mut code, Code::F8)?,
+            "f9" => set_key(&mut code, Code::F9)?,
+            "f10" => set_key(&mut code, Code::F10)?,
+            "f11" => set_key(&mut code, Code::F11)?,
+            "f12" => set_key(&mut code, Code::F12)?,
             // Special keys
-            "space" => code = Some(Code::Space),
-            "enter" | "return" => code = Some(Code::Enter),
-            "escape" | "esc" => code = Some(Code::Escape),
-            "tab" => code = Some(Code::Tab),
-            "backspace" => code = Some(Code::Backspace),
-            _ => {}
+            "space" => set_key(&mut code, Code::Space)?,
+            "enter" | "return" => set_key(&mut code, Code::Enter)?,
+            "escape" | "esc" => set_key(&mut code, Code::Escape)?,
+            "tab" => set_key(&mut code, Code::Tab)?,
+            "backspace" => set_key(&mut code, Code::Backspace)?,
+            // Arrows (HotkeyRecorder emits Up/Down/Left/Right)
+            "up" | "arrowup" => set_key(&mut code, Code::ArrowUp)?,
+            "down" | "arrowdown" => set_key(&mut code, Code::ArrowDown)?,
+            "left" | "arrowleft" => set_key(&mut code, Code::ArrowLeft)?,
+            "right" | "arrowright" => set_key(&mut code, Code::ArrowRight)?,
+            _ => return None,
         }
     }
 
@@ -667,4 +738,98 @@ fn parse_shortcut(shortcut_str: &str) -> Option<Shortcut> {
             Shortcut::new(Some(modifiers), c)
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every key name HotkeyRecorder's KEY_TO_BACKEND can emit.
+    fn recorder_keys() -> Vec<(String, Code)> {
+        let mut v: Vec<(String, Code)> = Vec::new();
+        let letters = [
+            Code::KeyA, Code::KeyB, Code::KeyC, Code::KeyD, Code::KeyE, Code::KeyF, Code::KeyG,
+            Code::KeyH, Code::KeyI, Code::KeyJ, Code::KeyK, Code::KeyL, Code::KeyM, Code::KeyN,
+            Code::KeyO, Code::KeyP, Code::KeyQ, Code::KeyR, Code::KeyS, Code::KeyT, Code::KeyU,
+            Code::KeyV, Code::KeyW, Code::KeyX, Code::KeyY, Code::KeyZ,
+        ];
+        for (i, c) in letters.iter().enumerate() {
+            v.push((((b'A' + i as u8) as char).to_string(), *c));
+        }
+        let digits = [
+            Code::Digit0, Code::Digit1, Code::Digit2, Code::Digit3, Code::Digit4,
+            Code::Digit5, Code::Digit6, Code::Digit7, Code::Digit8, Code::Digit9,
+        ];
+        for (i, c) in digits.iter().enumerate() {
+            v.push((i.to_string(), *c));
+        }
+        let fkeys = [
+            Code::F1, Code::F2, Code::F3, Code::F4, Code::F5, Code::F6,
+            Code::F7, Code::F8, Code::F9, Code::F10, Code::F11, Code::F12,
+        ];
+        for (i, c) in fkeys.iter().enumerate() {
+            v.push((format!("F{}", i + 1), *c));
+        }
+        for (n, c) in [
+            ("Space", Code::Space), ("Enter", Code::Enter), ("Escape", Code::Escape),
+            ("Tab", Code::Tab), ("Backspace", Code::Backspace), ("Up", Code::ArrowUp),
+            ("Down", Code::ArrowDown), ("Left", Code::ArrowLeft), ("Right", Code::ArrowRight),
+        ] {
+            v.push((n.to_string(), c));
+        }
+        v
+    }
+
+    #[test]
+    fn parses_every_string_the_recorder_can_emit() {
+        let keys = recorder_keys();
+        assert_eq!(keys.len(), 57, "recorder key table out of sync");
+        // Modifier combos in the order the recorder emits them.
+        let combos: [(&str, Modifiers); 5] = [
+            ("CommandOrControl", Modifiers::SUPER),
+            ("Control", Modifiers::CONTROL),
+            ("Alt", Modifiers::ALT),
+            ("CommandOrControl+Shift", Modifiers::SUPER | Modifiers::SHIFT),
+            ("Control+Shift+Alt", Modifiers::CONTROL | Modifiers::SHIFT | Modifiers::ALT),
+        ];
+        let mut ran = 0;
+        for (mods_str, mods) in combos {
+            for (name, code) in &keys {
+                let s = format!("{}+{}", mods_str, name);
+                let parsed = parse_shortcut(&s);
+                assert_eq!(parsed, Some(Shortcut::new(Some(mods), *code)), "failed for {s}");
+                ran += 1;
+            }
+        }
+        assert_eq!(ran, 285);
+    }
+
+    #[test]
+    fn parses_defaults_and_aliases() {
+        assert_eq!(
+            parse_shortcut("Option+S"),
+            Some(Shortcut::new(Some(Modifiers::ALT), Code::KeyS))
+        );
+        assert_eq!(parse_shortcut("esc"), Some(Shortcut::new(None, Code::Escape)));
+        assert_eq!(
+            parse_shortcut(" cmd + shift + d "),
+            Some(Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyD))
+        );
+    }
+
+    #[test]
+    fn rejects_empty_unknown_and_malformed() {
+        for bad in ["", "   ", "+", "Shift", "Alt+Shift", "Alt+Banana", "Alt+", "A+B", "Alt+S+D", "RightOption"] {
+            assert_eq!(parse_shortcut(bad), None, "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn validate_hotkey_cases() {
+        assert!(validate_hotkey("Dictation", "RightOption", true).is_ok());
+        assert!(validate_hotkey("Read aloud", "RightOption", false).is_err());
+        assert!(validate_hotkey("Dictation", "", true).unwrap_err().contains("not set"));
+        assert!(validate_hotkey("Dictation", "Alt+Nope", true).unwrap_err().contains("not a valid"));
+        assert!(validate_hotkey("Dictation", "Alt+Up", true).is_ok());
+    }
 }

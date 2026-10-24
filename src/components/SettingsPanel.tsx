@@ -36,6 +36,8 @@ export default function SettingsPanel() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [hardware, setHardware] = useState<HardwareProfile | null>(null);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const permissions = usePermissions();
 
   useEffect(() => {
@@ -65,8 +67,10 @@ export default function SettingsPanel() {
     try {
       const result = await invoke<Settings>("get_settings");
       setSettings(result);
+      setLoadError(null);
     } catch (err) {
       console.error("Failed to load settings:", err);
+      setLoadError(String(err));
     }
   };
 
@@ -84,8 +88,11 @@ export default function SettingsPanel() {
     try {
       await invoke("update_settings", { settings: newSettings });
       setSettings(newSettings);
+      setSaveError(null);
     } catch (err) {
       console.error("Failed to save settings:", err);
+      // Backend rejected the change (e.g. invalid/conflicting hotkey): keep the old value shown.
+      setSaveError(String(err));
     } finally {
       setSaving(false);
     }
@@ -146,6 +153,21 @@ export default function SettingsPanel() {
       setSaving(false);
     }
   };
+
+  if (!settings && loadError) {
+    return (
+      <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-300 space-y-2">
+        <p className="font-medium">Couldn't load settings</p>
+        <p className="text-xs break-words">{loadError}</p>
+        <button
+          onClick={loadSettings}
+          className="px-3 py-1.5 text-sm bg-slate-700 text-slate-100 rounded hover:bg-slate-600"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   if (!settings) {
     return (
@@ -215,6 +237,11 @@ export default function SettingsPanel() {
       {/* Hotkeys */}
       <section>
         <h2 className="text-lg font-semibold text-slate-200 mb-3">Keyboard Shortcuts</h2>
+        {saveError && (
+          <p role="alert" className="mb-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded px-3 py-2 break-words">
+            {saveError}
+          </p>
+        )}
         <div className="space-y-3">
           <SettingRow label="Dictation Hotkey">
             <div className="flex flex-col items-end gap-2">
@@ -260,12 +287,6 @@ export default function SettingsPanel() {
             <Toggle
               checked={settings.launch_at_login}
               onChange={(v) => updateLaunchAtLogin(v)}
-            />
-          </SettingRow>
-          <SettingRow label="Menu bar mode">
-            <Toggle
-              checked={settings.menu_bar_mode}
-              onChange={(v) => updateSetting("menu_bar_mode", v)}
             />
           </SettingRow>
         </div>

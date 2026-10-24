@@ -23,6 +23,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [downloading, setDownloading] = useState<Set<string>>(new Set());
   const [modelsReady, setModelsReady] = useState(false);
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
 
   // Load models on mount
   useEffect(() => {
@@ -67,14 +68,22 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     }
   };
 
-  const downloadModel = async (modelId: string) => {
+  const downloadModel = async (modelId: string): Promise<boolean> => {
     try {
+      setDownloadErrors((prev) => {
+        const next = { ...prev };
+        delete next[modelId];
+        return next;
+      });
       setDownloading((prev) => new Set(prev).add(modelId));
       setDownloadProgress((prev) => ({ ...prev, [modelId]: 0 }));
       await invoke("download_model", { modelId });
       await loadModels();
+      return true;
     } catch (err) {
       console.error("Failed to download model:", err);
+      setDownloadErrors((prev) => ({ ...prev, [modelId]: `Download failed: ${String(err)}` }));
+      return false;
     } finally {
       setDownloading((prev) => {
         const next = new Set(prev);
@@ -86,9 +95,10 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
 
   const downloadRecommendedModels = async () => {
     // Download in sequence: STT first, then TTS
-    await downloadModel("ggml-base.en.bin");
-    await downloadModel("kokoro-v1.0.onnx");
-    await downloadModel("voices-v1.0.bin");
+    // Stop at the first failure so the error stays attached to the right item.
+    for (const id of ["ggml-base.en.bin", "kokoro-v1.0.onnx", "voices-v1.0.bin"]) {
+      if (!(await downloadModel(id))) return;
+    }
   };
 
   const handleComplete = async () => {
@@ -161,6 +171,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
           )}
           {step === "models" && (
             <ModelsStep
+              downloadErrors={downloadErrors}
               models={models}
               downloadProgress={downloadProgress}
               downloading={downloading}
@@ -343,6 +354,7 @@ function PermissionCard({
 }
 
 function ModelsStep({
+  downloadErrors,
   models,
   downloadProgress,
   downloading,
@@ -351,6 +363,7 @@ function ModelsStep({
   onNext,
   onBack,
 }: {
+  downloadErrors: Record<string, string>;
   models: Model[];
   downloadProgress: Record<string, number>;
   downloading: Set<string>;
@@ -390,6 +403,7 @@ function ModelsStep({
           status={sttModel?.status}
           progress={downloadProgress["ggml-base.en.bin"]}
           isDownloading={downloading.has("ggml-base.en.bin")}
+          error={downloadErrors["ggml-base.en.bin"]}
         />
         <ModelItem
           name="Kokoro 82M"
@@ -398,6 +412,7 @@ function ModelsStep({
           status={ttsModel1?.status}
           progress={downloadProgress["kokoro-v1.0.onnx"]}
           isDownloading={downloading.has("kokoro-v1.0.onnx")}
+          error={downloadErrors["kokoro-v1.0.onnx"]}
         />
         <ModelItem
           name="Kokoro Voice Styles"
@@ -406,6 +421,7 @@ function ModelsStep({
           status={ttsModel2?.status}
           progress={downloadProgress["voices-v1.0.bin"]}
           isDownloading={downloading.has("voices-v1.0.bin")}
+          error={downloadErrors["voices-v1.0.bin"]}
         />
       </div>
 
@@ -415,7 +431,7 @@ function ModelsStep({
           disabled={isDownloading}
           className="w-full py-3 mb-4 bg-sky-500 hover:bg-sky-600 disabled:bg-slate-600 text-white font-medium rounded-lg transition-colors"
         >
-          Download All ({totalSize})
+          {Object.keys(downloadErrors).length > 0 ? "Retry download" : "Download All"} ({totalSize})
         </button>
       )}
 
@@ -452,7 +468,9 @@ function ModelItem({
   status,
   progress,
   isDownloading,
+  error,
 }: {
+  error?: string;
   name: string;
   size: string;
   description: string;
@@ -486,6 +504,11 @@ function ModelItem({
           </div>
           <p className="text-xs text-slate-400 mt-1">{progress || 0}%</p>
         </div>
+      )}
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-red-400 break-words">
+          {error}
+        </p>
       )}
     </div>
   );
