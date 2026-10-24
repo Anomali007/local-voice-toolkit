@@ -2,10 +2,59 @@
 
 use std::process::Command;
 
+const TERMINAL_APPS: &[&str] = &["Terminal", "iTerm2", "Alacritty", "kitty", "WezTerm", "Warp"];
+
+/// Terminals interpret Cmd+C differently, so they use the Edit > Copy menu item instead.
+fn is_terminal_app(name: &str) -> bool {
+    TERMINAL_APPS.contains(&name)
+}
+
+/// Escape a string for embedding inside an AppleScript double-quoted literal.
+fn applescript_quote(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Pure decision: did the copy attempt put newly selected text on the pasteboard?
+/// `count_before`/`count_after` are NSPasteboard change counts around the copy.
+/// If the count did not move, nothing was copied and the clipboard text is stale
+/// (the user had nothing selected), so we must not return it.
+fn copy_result(count_before: Option<i64>, count_after: Option<i64>, clipboard: &str) -> Option<String> {
+    match (count_before, count_after) {
+        (Some(b), Some(a)) if a != b => {
+            let t = clipboard.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        }
+        // Unchanged, or we could not read the counter: fail safe, report no selection.
+        _ => None,
+    }
+}
+
+/// Current NSPasteboard change count (increments on every pasteboard write).
+fn pasteboard_change_count() -> Option<i64> {
+    let out = Command::new("osascript")
+        .args([
+            "-l",
+            "JavaScript",
+            "-e",
+            "ObjC.import('AppKit'); $.NSPasteboard.generalPasteboard.changeCount",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
 /// Get the currently selected text from the frontmost application.
-/// Uses AppleScript as a reliable cross-app method.
+/// Sends a copy command and checks the pasteboard change count so that an empty
+/// selection returns None instead of a stale clipboard. The user's previous
+/// text clipboard is restored afterwards.
 pub fn get_selected_text() -> Option<String> {
-    // Detect the frontmost app to handle terminal apps differently
     let frontapp_script = r#"
         tell application "System Events"
             set frontApp to name of first application process whose frontmost is true
@@ -27,59 +76,53 @@ pub fn get_selected_text() -> Option<String> {
         })
         .unwrap_or_default();
 
-    // For Terminal/iTerm, Cmd+C sends SIGINT — use a different approach
-    let copy_script = if frontapp == "Terminal" || frontapp == "iTerm2" || frontapp == "Alacritty" || frontapp == "kitty" || frontapp == "WezTerm" || frontapp == "Warp" {
-        // Terminal apps: try the Edit menu Copy command instead of keystroke
-        r#"
+    let copy_script = if is_terminal_app(&frontapp) {
+        format!(
+            r#"
             tell application "System Events"
-                tell process "Terminal"
+                tell process "{}"
                     try
                         click menu item "Copy" of menu "Edit" of menu bar 1
                     end try
                 end tell
             end tell
             delay 0.15
-            the clipboard
-        "#.to_string()
+        "#,
+            applescript_quote(&frontapp)
+        )
     } else {
         r#"
             tell application "System Events"
                 keystroke "c" using {command down}
             end tell
             delay 0.1
-            the clipboard
-        "#.to_string()
+        "#
+        .to_string()
     };
 
-    let script = &copy_script;
-
-    // Save current clipboard
     let old_clipboard = get_clipboard();
+    let count_before = pasteboard_change_count();
 
-    // Run the AppleScript to copy selection
     let output = Command::new("osascript")
         .arg("-e")
-        .arg(script)
+        .arg(&copy_script)
         .output()
         .ok()?;
+    if !output.status.success() {
+        return None;
+    }
 
-    if output.status.success() {
-        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let count_after = pasteboard_change_count();
+    let result = copy_result(count_before, count_after, &get_clipboard().unwrap_or_default());
 
-        // Restore old clipboard after a short delay
-        if let Some(old) = old_clipboard {
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                let _ = set_clipboard(&old);
-            });
-        }
-
-        if !text.is_empty() {
-            return Some(text);
+    // Only restore if our copy actually replaced the clipboard.
+    if count_before != count_after {
+        if let Some(old) = old_clipboard.filter(|o| !o.is_empty()) {
+            let _ = set_clipboard(&old);
         }
     }
 
-    None
+    result
 }
 
 /// Get the current clipboard contents
@@ -124,4 +167,39 @@ pub fn get_selected_text_ax() -> Option<String> {
     // The macos-accessibility-client crate can help with this
 
     get_selected_text()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unchanged_count_means_nothing_selected() {
+        assert_eq!(copy_result(Some(7), Some(7), "stale clipboard text"), None);
+    }
+
+    #[test]
+    fn changed_count_returns_trimmed_text() {
+        assert_eq!(copy_result(Some(7), Some(8), "  hello world \n"), Some("hello world".into()));
+    }
+
+    #[test]
+    fn changed_but_blank_is_none() {
+        assert_eq!(copy_result(Some(1), Some(2), "  \n"), None);
+    }
+
+    #[test]
+    fn unreadable_counter_fails_safe() {
+        assert_eq!(copy_result(None, Some(2), "text"), None);
+        assert_eq!(copy_result(Some(1), None, "text"), None);
+        assert_eq!(copy_result(None, None, "text"), None);
+    }
+
+    #[test]
+    fn terminal_detection_and_quoting() {
+        assert!(is_terminal_app("iTerm2"));
+        assert!(is_terminal_app("Warp"));
+        assert!(!is_terminal_app("Safari"));
+        assert_eq!(applescript_quote(r#"a"b\c"#), r#"a\"b\\c"#);
+    }
 }
