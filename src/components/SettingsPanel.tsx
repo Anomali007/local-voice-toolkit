@@ -4,6 +4,7 @@ import { enable as enableAutostart, disable as disableAutostart, isEnabled as is
 import { open } from "@tauri-apps/plugin-shell";
 import HotkeyRecorder from "./HotkeyRecorder";
 import { usePermissions } from "../hooks/usePermissions";
+import { AccessibilityIcon, CheckIcon, KeyboardIcon, MicIcon, Section, SettingRow, Spinner, Toggle } from "./ui";
 
 interface Settings {
   stt_hotkey: string;
@@ -112,12 +113,14 @@ export default function SettingsPanel() {
         await invoke("open_system_settings", { pane: "microphone" });
       } else if (pane === "Privacy_Accessibility") {
         await invoke("open_system_settings", { pane: "accessibility" });
+      } else if (pane === "Privacy_InputMonitoring") {
+        await invoke("open_system_settings", { pane: "input_monitoring" });
       }
     } catch (e) {
       console.error("Failed to open system settings:", e);
       // Last resort fallback
       try {
-        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+        await open(`x-apple.systempreferences:com.apple.preference.security?${pane}`);
       } catch {
         console.error("All methods to open system settings failed");
       }
@@ -156,13 +159,10 @@ export default function SettingsPanel() {
 
   if (!settings && loadError) {
     return (
-      <div role="alert" className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-300 space-y-2">
+      <div role="alert" className="alert-danger space-y-2 !p-4">
         <p className="font-medium">Couldn't load settings</p>
         <p className="text-xs break-words">{loadError}</p>
-        <button
-          onClick={loadSettings}
-          className="px-3 py-1.5 text-sm bg-slate-700 text-slate-100 rounded hover:bg-slate-600"
-        >
+        <button onClick={loadSettings} className="btn-secondary">
           Retry
         </button>
       </div>
@@ -171,88 +171,32 @@ export default function SettingsPanel() {
 
   if (!settings) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-500"></div>
+      <div className="flex h-64 items-center justify-center">
+        <Spinner className="h-6 w-6" />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Hardware Info */}
-      {hardware && (
-        <section className="bg-slate-800 rounded-lg p-4">
-          <h2 className="text-sm font-medium text-slate-300 mb-3">System Information</h2>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <p className="text-slate-500">Chip</p>
-              <p className="text-slate-200">{hardware.chip_name}</p>
-            </div>
-            <div>
-              <p className="text-slate-500">Memory</p>
-              <p className="text-slate-200">{hardware.ram_gb} GB</p>
-            </div>
-            <div>
-              <p className="text-slate-500">CPU Cores</p>
-              <p className="text-slate-200">{hardware.cpu_cores}</p>
-            </div>
-            <div>
-              <p className="text-slate-500">Recommended Tier</p>
-              <p className="text-slate-200 capitalize">{hardware.recommended_tier}</p>
-            </div>
-          </div>
-          {hardware.has_neural_engine && (
-            <p className="text-xs text-green-400 mt-2">✓ Neural Engine available for CoreML acceleration</p>
-          )}
-        </section>
-      )}
-
-      {/* Permissions */}
-      <section>
-        <h2 className="text-lg font-semibold text-slate-200 mb-3">Permissions</h2>
-        <p className="text-xs text-slate-400 mb-3">
-          Blah³ requires these permissions to function properly.
-        </p>
-        <div className="space-y-3">
-          <PermissionRow
-            icon="🎤"
-            title="Microphone Access"
-            description="Required for speech-to-text dictation"
-            granted={permissions?.microphone}
-            onOpen={() => openSystemPreferences("Privacy_Microphone")}
-          />
-          <PermissionRow
-            icon="♿"
-            title="Accessibility Access"
-            description="Required to read selected text and paste transcriptions"
-            granted={permissions?.accessibility}
-            onOpen={() => openSystemPreferences("Privacy_Accessibility")}
-          />
-        </div>
-        <p className="text-xs text-slate-500 mt-3">
-          After changing permissions, you may need to restart Blah³.
-        </p>
-      </section>
-
       {/* Hotkeys */}
-      <section>
-        <h2 className="text-lg font-semibold text-slate-200 mb-3">Keyboard Shortcuts</h2>
+      <Section title="Keyboard Shortcuts">
         {saveError && (
-          <p role="alert" className="mb-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded px-3 py-2 break-words">
+          <p role="alert" className="alert-danger mb-2">
             {saveError}
           </p>
         )}
-        <div className="space-y-3">
-          <SettingRow label="Dictation Hotkey">
+        <div className="card card-list">
+          <SettingRow label="Dictate" hint="Right Option works with a tap or a hold.">
             <div className="flex flex-col items-end gap-2">
-              <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
                 <input
                   type="checkbox"
                   checked={settings.stt_hotkey === "RightOption"}
                   onChange={(e) =>
                     updateSetting("stt_hotkey", e.target.checked ? "RightOption" : "Option+D")
                   }
-                  className="accent-sky-500"
+                  className="h-3.5 w-3.5 accent-[rgb(var(--c-accent))]"
                 />
                 Right ⌥ key alone (tap or hold)
               </label>
@@ -264,43 +208,41 @@ export default function SettingsPanel() {
               )}
             </div>
           </SettingRow>
-          <SettingRow label="Read Aloud Hotkey">
+          <SettingRow label="Read aloud">
             <HotkeyRecorder
               value={settings.tts_hotkey}
               onChange={(value) => updateSetting("tts_hotkey", value)}
             />
           </SettingRow>
         </div>
-      </section>
+      </Section>
 
       {/* Behavior */}
-      <section>
-        <h2 className="text-lg font-semibold text-slate-200 mb-3">Behavior</h2>
-        <div className="space-y-3">
-          <SettingRow label="Auto-paste transcription">
+      <Section title="Behavior">
+        <div className="card card-list">
+          <SettingRow label="Auto-paste transcription" hint="Type the text into the app you were using.">
             <Toggle
+              label="Auto-paste transcription"
               checked={settings.auto_paste}
               onChange={(v) => updateSetting("auto_paste", v)}
             />
           </SettingRow>
           <SettingRow label="Launch at login">
             <Toggle
+              label="Launch at login"
               checked={settings.launch_at_login}
               onChange={(v) => updateLaunchAtLogin(v)}
             />
           </SettingRow>
         </div>
-      </section>
+      </Section>
 
       {/* Silence Detection */}
-      <section>
-        <h2 className="text-lg font-semibold text-slate-200 mb-3">Silence Detection</h2>
-        <p className="text-xs text-slate-400 mb-3">
-          Automatically stop recording when silence is detected after speaking.
-        </p>
-        <div className="space-y-3">
+      <Section title="Silence Detection" note="Stop recording on its own after you finish speaking.">
+        <div className="card card-list">
           <SettingRow label="Enable auto-stop">
             <Toggle
+              label="Enable auto-stop"
               checked={settings.silence_detection_enabled}
               onChange={(v) => updateSetting("silence_detection_enabled", v)}
             />
@@ -308,31 +250,33 @@ export default function SettingsPanel() {
           {settings.silence_detection_enabled && (
             <>
               <SettingRow label="Silence duration">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <input
                     type="range"
+                    aria-label="Silence duration"
                     min="0.5"
                     max="5"
                     step="0.5"
                     value={settings.silence_duration}
                     onChange={(e) => updateSetting("silence_duration", parseFloat(e.target.value))}
-                    className="w-24 accent-sky-500"
+                    className="!w-28"
                   />
-                  <span className="text-sm text-slate-400 w-12">{settings.silence_duration}s</span>
+                  <span className="w-8 text-right text-[13px] tabular-nums text-muted">{settings.silence_duration}s</span>
                 </div>
               </SettingRow>
               <SettingRow label="Sensitivity">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <input
                     type="range"
+                    aria-label="Sensitivity"
                     min="0.001"
                     max="0.1"
                     step="0.005"
                     value={settings.silence_threshold}
                     onChange={(e) => updateSetting("silence_threshold", parseFloat(e.target.value))}
-                    className="w-24 accent-sky-500"
+                    className="!w-28"
                   />
-                  <span className="text-sm text-slate-400 w-16">
+                  <span className="w-12 text-right text-[13px] text-muted">
                     {settings.silence_threshold < 0.02 ? "High" : settings.silence_threshold < 0.05 ? "Medium" : "Low"}
                   </span>
                 </div>
@@ -340,85 +284,101 @@ export default function SettingsPanel() {
             </>
           )}
         </div>
-      </section>
+      </Section>
 
-      {/* Save Indicator */}
-      {saving && (
-        <p className="text-xs text-slate-400 text-center">Saving...</p>
+      {/* Permissions */}
+      <Section title="Permissions" note="After changing a permission you may need to restart Blah³.">
+        <div className="card card-list">
+          <PermissionRow
+            Icon={MicIcon}
+            title="Microphone"
+            description="Needed to hear you"
+            granted={permissions?.microphone}
+            onOpen={() => openSystemPreferences("Privacy_Microphone")}
+          />
+          <PermissionRow
+            Icon={AccessibilityIcon}
+            title="Accessibility"
+            description="Needed to read selected text and type transcriptions"
+            granted={permissions?.accessibility}
+            onOpen={() => openSystemPreferences("Privacy_Accessibility")}
+          />
+          {permissions?.input_monitoring !== undefined && (
+            <PermissionRow
+              Icon={KeyboardIcon}
+              title="Input Monitoring"
+              description="Needed for the right Option key"
+              granted={permissions.input_monitoring}
+              onOpen={() => openSystemPreferences("Privacy_InputMonitoring")}
+            />
+          )}
+        </div>
+      </Section>
+
+      {/* Hardware */}
+      {hardware && (
+        <Section title="This Mac">
+          <div className="card card-list">
+            <SettingRow label="Chip">
+              <span className="text-[13px] text-muted">{hardware.chip_name}</span>
+            </SettingRow>
+            <SettingRow label="Memory">
+              <span className="text-[13px] text-muted">{hardware.ram_gb} GB</span>
+            </SettingRow>
+            <SettingRow label="CPU cores">
+              <span className="text-[13px] text-muted">{hardware.cpu_cores}</span>
+            </SettingRow>
+            <SettingRow label="Recommended tier">
+              <span className="text-[13px] capitalize text-muted">{hardware.recommended_tier}</span>
+            </SettingRow>
+            {hardware.has_neural_engine && (
+              <div className="row">
+                <span className="flex items-center gap-1.5 text-xs text-ok">
+                  <CheckIcon className="h-3.5 w-3.5" /> Neural Engine available for faster transcription
+                </span>
+              </div>
+            )}
+          </div>
+        </Section>
       )}
 
-      {/* About */}
-      <section className="text-center pt-4 border-t border-slate-800">
-        <p className="text-sm text-slate-400">Blah³ v0.1.0</p>
-        <p className="text-xs text-slate-500 mt-1">Local Voice Toolkit for macOS</p>
-      </section>
-    </div>
-  );
-}
+      <p className="h-4 text-center text-xs text-subtle" aria-live="polite">
+        {saving ? "Saving…" : ""}
+      </p>
 
-function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-sm text-slate-300">{label}</span>
-      {children}
+      <p className="text-center text-xs text-subtle">Blah³ v0.1.0 · Local voice toolkit for macOS</p>
     </div>
-  );
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      className={`w-11 h-6 rounded-full transition-colors ${
-        checked ? "bg-sky-500" : "bg-slate-700"
-      }`}
-    >
-      <div
-        className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
-          checked ? "translate-x-5" : "translate-x-0.5"
-        }`}
-      />
-    </button>
   );
 }
 
 function PermissionRow({
-  icon,
+  Icon,
   title,
   description,
   granted,
   onOpen,
 }: {
-  icon: string;
+  Icon: (p: { className?: string }) => JSX.Element;
   title: string;
   description: string;
   granted?: boolean;
   onOpen: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between bg-slate-800 rounded-lg p-3">
-      <div className="flex items-center gap-3">
-        <span className="text-xl">{icon}</span>
-        <div>
+    <div className="row">
+      <div className="flex min-w-0 items-center gap-3">
+        <Icon className="h-5 w-5 shrink-0 text-accent" />
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <p className="text-sm text-slate-200">{title}</p>
+            <p className="text-[13px]">{title}</p>
             {granted !== undefined && (
-              <span className={`text-xs px-1.5 py-0.5 rounded ${
-                granted
-                  ? "bg-green-500/20 text-green-400"
-                  : "bg-red-500/20 text-red-400"
-              }`}>
-                {granted ? "Granted" : "Not Granted"}
-              </span>
+              <span className={granted ? "badge-ok" : "badge-danger"}>{granted ? "Granted" : "Not Granted"}</span>
             )}
           </div>
-          <p className="text-xs text-slate-400">{description}</p>
+          <p className="text-xs text-muted">{description}</p>
         </div>
       </div>
-      <button
-        onClick={onOpen}
-        className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded transition-colors"
-      >
+      <button onClick={onOpen} className="btn-secondary shrink-0">
         Open Settings
       </button>
     </div>

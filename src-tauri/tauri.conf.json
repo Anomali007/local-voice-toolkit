@@ -15,8 +15,10 @@
       {
         "label": "main",
         "title": "Blah³",
-        "width": 480,
-        "height": 640,
+        "width": 760,
+        "height": 560,
+        "minWidth": 640,
+        "minHeight": 480,
         "resizable": true,
         "decorations": true,
         "visible": true,
