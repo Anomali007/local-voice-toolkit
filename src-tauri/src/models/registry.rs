@@ -138,6 +138,18 @@ impl ModelRegistry {
                     description: format!("🎯 {} High accuracy + fast with CoreML on {}.", coreml_note, chip),
                 },
                 ModelInfo {
+                    id: crate::engines::parakeet::MODEL_ID.into(),
+                    name: "Parakeet TDT 0.6B v2 (English)".into(),
+                    model_type: ModelType::Stt,
+                    size_bytes: crate::engines::parakeet::total_size(),
+                    size_display: "661 MB".into(),
+                    // Three files; see engines::parakeet::FILES.
+                    download_url: crate::engines::parakeet::file_url("encoder-model.int8.onnx"),
+                    status: ModelStatus::Available,
+                    sha256: String::new(),
+                    description: "NVIDIA Parakeet TDT, int8. More accurate than Whisper Base on names and punctuation; runs on the CPU, best for dictation under about 30 seconds. English only. CC-BY-4.0 (NVIDIA).".into(),
+                },
+                ModelInfo {
                     id: "kokoro-v1.0.onnx".into(),
                     name: "Kokoro 82M".into(),
                     model_type: ModelType::Tts,
@@ -319,8 +331,8 @@ mod tests {
         let registry = ModelRegistry::new();
         let stt = registry.get_stt_models();
 
-        // 4 base whisper models + 3 CoreML encoders = 7
-        assert_eq!(stt.len(), 7);
+        // 4 base whisper models + 3 CoreML encoders + Parakeet = 8
+        assert_eq!(stt.len(), 8);
     }
 
     #[test]
@@ -355,14 +367,16 @@ mod tests {
     #[test]
     fn single_file_downloads_are_pinned_and_hashed() {
         for model in ModelRegistry::new().get_all_models() {
-            if model.id == crate::engines::phonon::MODEL_ID {
-                continue; // per-file hashes in engines::phonon::FILES
+            if model.id == crate::engines::phonon::MODEL_ID
+                || model.id == crate::engines::parakeet::MODEL_ID
+            {
+                continue; // per-file hashes in engines::{phonon,parakeet}::FILES
             }
             assert_eq!(model.sha256.len(), 64, "{} has no SHA-256", model.id);
             assert!(model.sha256.chars().all(|c| c.is_ascii_hexdigit()), "{}", model.id);
             assert!(!model.download_url.contains("/resolve/main/"), "{} not pinned", model.id);
         }
-        for (name, _, sha) in crate::engines::phonon::FILES {
+        for (name, _, sha) in crate::engines::phonon::FILES.iter().chain(&crate::engines::parakeet::FILES) {
             assert_eq!(sha.len(), 64, "{name}");
         }
     }

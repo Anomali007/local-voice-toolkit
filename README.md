@@ -31,7 +31,7 @@ Local Voice Toolkit for macOS — Speech-to-Text and Text-to-Speech with AI mode
 
 - **Frontend**: React + Tailwind CSS
 - **Backend**: Rust + Tauri v2
-- **STT Engine**: whisper-rs (whisper.cpp with CoreML/Metal acceleration)
+- **STT Engines**: whisper-rs (whisper.cpp with CoreML/Metal acceleration) and NVIDIA Parakeet TDT 0.6B v2 (int8 ONNX via parakeet-rs / ONNX Runtime, CPU)
 - **TTS Engine**: kokoro-tiny (Kokoro-82M via ONNX Runtime)
 
 ## Requirements
@@ -190,3 +190,14 @@ blah3/
 ## License
 
 MIT
+
+### Model attributions
+
+- **Parakeet TDT 0.6B v2** (optional dictation model): by NVIDIA, licensed
+  [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). Blah³ downloads
+  the int8 ONNX conversion by istupakov
+  ([istupakov/parakeet-tdt-0.6b-v2-onnx](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx),
+  base model [nvidia/parakeet-tdt-0.6b-v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2)).
+  Runtime: [parakeet-rs](https://github.com/altunenes/parakeet-rs) (MIT/Apache-2.0)
+  on [ort](https://github.com/pykeio/ort) / ONNX Runtime (MIT).
+- **Whisper** (OpenAI, MIT) via whisper.cpp; **Kokoro-82M** (Apache-2.0); **Phonon 31m** (Gradium, Apache-2.0).
