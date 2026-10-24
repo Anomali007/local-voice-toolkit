@@ -36,6 +36,24 @@ pub struct AppSettings {
     /// Nudge from the anchored position, in logical px (right/down positive).
     pub overlay_offset_x: i32,
     pub overlay_offset_y: i32,
+    // Dictation extras
+    /// Drop "um"/"uh"-style fillers from transcripts.
+    pub remove_fillers: bool,
+    /// Keep a local log of finished dictations (History page).
+    pub history_enabled: bool,
+    /// Most recent dictations kept (older ones are dropped).
+    pub history_max_entries: u32,
+    /// Play a system sound when the microphone goes live.
+    pub sound_on_start: bool,
+    /// Play a system sound when a dictation ends (or is cancelled).
+    pub sound_on_stop: bool,
+    /// File stem in /System/Library/Sounds, e.g. "Tink".
+    pub sound_start_name: String,
+    pub sound_stop_name: String,
+    /// 0.0 - 1.0
+    pub sound_volume: f32,
+    /// Holding Space while recording pauses capture (tap still types a space).
+    pub hold_space_to_pause: bool,
 }
 
 fn default_tts_engine() -> String {
@@ -78,6 +96,15 @@ impl Default for AppSettings {
             overlay_click_through: true,
             overlay_offset_x: 0,
             overlay_offset_y: 0,
+            remove_fillers: true,
+            history_enabled: true,
+            history_max_entries: 1000,
+            sound_on_start: false,
+            sound_on_stop: false,
+            sound_start_name: "Tink".to_string(),
+            sound_stop_name: "Pop".to_string(),
+            sound_volume: 0.5,
+            hold_space_to_pause: true,
         }
     }
 }
@@ -246,6 +273,15 @@ mod tests {
         assert_eq!(s.overlay_max_lines, 4);
         assert!(s.overlay_click_through);
         assert_eq!((s.overlay_offset_x, s.overlay_offset_y), (0, 0));
+    }
+
+    #[test]
+    fn dictation_extras_defaults() {
+        let s = parse_settings("{}").unwrap();
+        assert!(s.remove_fillers && s.history_enabled && s.hold_space_to_pause);
+        assert_eq!(s.history_max_entries, 1000);
+        assert!(!s.sound_on_start && !s.sound_on_stop);
+        assert_eq!((s.sound_start_name.as_str(), s.sound_stop_name.as_str()), ("Tink", "Pop"));
     }
 
     #[test]
