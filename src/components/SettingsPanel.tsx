@@ -28,7 +28,33 @@ interface Settings {
   overlay_click_through: boolean;
   overlay_offset_x: number;
   overlay_offset_y: number;
+  // Dictation extras
+  remove_fillers: boolean;
+  history_enabled: boolean;
+  history_max_entries: number;
+  sound_on_start: boolean;
+  sound_on_stop: boolean;
+  sound_start_name: string;
+  sound_stop_name: string;
+  sound_volume: number;
+  hold_space_to_pause: boolean;
 }
+
+/** Mirrors the backend defaults, for a settings file written by an older build. */
+const EXTRA_DEFAULTS = {
+  remove_fillers: true,
+  history_enabled: true,
+  history_max_entries: 1000,
+  sound_on_start: false,
+  sound_on_stop: false,
+  sound_start_name: "Tink",
+  sound_stop_name: "Pop",
+  sound_volume: 0.5,
+  hold_space_to_pause: true,
+};
+
+const HISTORY_SIZES = [100, 500, 1000, 5000] as const;
+const FALLBACK_SOUNDS = ["Tink", "Pop", "Glass", "Purr", "Morse", "Bottle", "Frog", "Ping", "Hero", "Submarine"];
 
 const OVERLAY_POSITIONS = [
   ["top-left", "Top left"],
@@ -61,11 +87,15 @@ export default function SettingsPanel() {
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [sounds, setSounds] = useState<string[]>(FALLBACK_SOUNDS);
+  const [historyNote, setHistoryNote] = useState<string | null>(null);
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
   const permissions = usePermissions();
 
   useEffect(() => {
     loadSettings();
     loadHardware();
+    loadSounds();
     syncAutostartState();
   }, []);
 
@@ -89,11 +119,39 @@ export default function SettingsPanel() {
   const loadSettings = async () => {
     try {
       const result = await invoke<Settings>("get_settings");
-      setSettings(result);
+      setSettings({ ...EXTRA_DEFAULTS, ...result });
       setLoadError(null);
     } catch (err) {
       console.error("Failed to load settings:", err);
       setLoadError(String(err));
+    }
+  };
+
+  const loadSounds = async () => {
+    try {
+      const list = await invoke<string[]>("list_system_sounds");
+      if (Array.isArray(list) && list.length > 0) setSounds(list);
+    } catch {
+      // keep the built-in list
+    }
+  };
+
+  const previewSound = async (name: string) => {
+    try {
+      await invoke("preview_sound", { name, volume: settings?.sound_volume ?? 0.5 });
+    } catch (err) {
+      console.error("Failed to preview sound:", err);
+    }
+  };
+
+  const clearHistory = async () => {
+    try {
+      await invoke("clear_history");
+      setHistoryNote("History cleared");
+    } catch (err) {
+      setHistoryNote(`Couldn't clear history: ${err}`);
+    } finally {
+      setConfirmClearHistory(false);
     }
   };
 
@@ -277,6 +335,132 @@ export default function SettingsPanel() {
               checked={settings.launch_at_login}
               onChange={(v) => updateLaunchAtLogin(v)}
             />
+          </SettingRow>
+          <SettingRow label="Remove filler words" hint="Drops “um”, “uh”, “erm”, “hmm” and similar from the text.">
+            <Toggle
+              label="Remove filler words"
+              checked={settings.remove_fillers}
+              onChange={(v) => updateSetting("remove_fillers", v)}
+            />
+          </SettingRow>
+          <SettingRow
+            label="Hold Space to pause"
+            hint="While recording, hold Space to pause and let go to continue. A quick tap still types a space. Needs Accessibility."
+          >
+            <Toggle
+              label="Hold Space to pause"
+              checked={settings.hold_space_to_pause}
+              onChange={(v) => updateSetting("hold_space_to_pause", v)}
+            />
+          </SettingRow>
+        </div>
+      </Section>
+
+      {/* Sounds */}
+      <Section title="Sounds" note="Short cues from the macOS system sounds. The start sound plays once the microphone is live.">
+        <div className="card card-list">
+          {(
+            [
+              ["Start", "sound_on_start", "sound_start_name"],
+              ["Stop", "sound_on_stop", "sound_stop_name"],
+            ] as const
+          ).map(([label, onKey, nameKey]) => (
+            <SettingRow
+              key={onKey}
+              label={`${label} sound`}
+              hint={onKey === "sound_on_stop" ? "Also plays a softer sound when you cancel with Esc." : undefined}
+            >
+              <div className="flex items-center gap-2">
+                <select
+                  aria-label={`${label} sound`}
+                  value={settings[nameKey]}
+                  disabled={!settings[onKey]}
+                  onChange={(e) => updateSetting(nameKey, e.target.value)}
+                >
+                  {(sounds.includes(settings[nameKey]) ? sounds : [settings[nameKey], ...sounds]).map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!settings[onKey]}
+                  onClick={() => previewSound(settings[nameKey])}
+                  aria-label={`Preview ${label.toLowerCase()} sound`}
+                  className="btn-secondary"
+                >
+                  Preview
+                </button>
+                <Toggle
+                  label={`Play ${label.toLowerCase()} sound`}
+                  checked={settings[onKey]}
+                  onChange={(v) => updateSetting(onKey, v)}
+                />
+              </div>
+            </SettingRow>
+          ))}
+          <SettingRow label="Volume">
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                aria-label="Sound volume"
+                min={0}
+                max={1}
+                step={0.05}
+                value={settings.sound_volume}
+                onChange={(e) => updateSetting("sound_volume", parseFloat(e.target.value))}
+                className="w-32"
+              />
+              <span className="w-9 text-right text-[13px] tabular-nums text-muted">
+                {Math.round(settings.sound_volume * 100)}%
+              </span>
+            </div>
+          </SettingRow>
+        </div>
+      </Section>
+
+      {/* History */}
+      <Section title="History" note="Finished dictations are saved only on this Mac, in a file only you can read. Text is never written to the log.">
+        <div className="card card-list">
+          <SettingRow label="Save history">
+            <Toggle
+              label="Save history"
+              checked={settings.history_enabled}
+              onChange={(v) => updateSetting("history_enabled", v)}
+            />
+          </SettingRow>
+          <SettingRow label="Keep the latest" hint="Older dictations are removed automatically.">
+            <select
+              aria-label="History size"
+              value={settings.history_max_entries}
+              onChange={(e) => updateSetting("history_max_entries", parseInt(e.target.value, 10))}
+            >
+              {(HISTORY_SIZES.some((n) => n === settings.history_max_entries)
+                ? [...HISTORY_SIZES]
+                : [settings.history_max_entries, ...HISTORY_SIZES]
+              ).map((n) => (
+                <option key={n} value={n}>
+                  {n.toLocaleString()} dictations
+                </option>
+              ))}
+            </select>
+          </SettingRow>
+          <SettingRow label="Clear history" hint={historyNote ?? "Deletes every saved dictation."}>
+            {confirmClearHistory ? (
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setConfirmClearHistory(false)} className="btn-secondary">
+                  Keep
+                </button>
+                <button type="button" onClick={clearHistory} className="btn-danger-solid">
+                  Delete all
+                </button>
+              </div>
+            ) : (
+              <button type="button" onClick={() => setConfirmClearHistory(true)} className="btn-danger">
+                Clear history…
+              </button>
+            )}
           </SettingRow>
         </div>
       </Section>

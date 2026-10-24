@@ -10,6 +10,21 @@ use std::thread;
 
 use super::silence::SilenceDetector;
 
+/// While true, captured audio is dropped (not appended, silence detector
+/// idle, level reads 0). Set by the hold-Space-to-pause gesture. A process
+/// global rather than a per-capture handle so the key-event thread can flip
+/// it without taking the async capture lock; `start`/`stop` always clear it,
+/// so a pause can never outlive its recording.
+static PAUSED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_paused(paused: bool) {
+    PAUSED.store(paused, Ordering::SeqCst);
+}
+
+pub fn is_paused() -> bool {
+    PAUSED.load(Ordering::SeqCst)
+}
+
 /// Configuration for silence detection auto-stop.
 #[derive(Debug, Clone)]
 pub struct SilenceConfig {
@@ -92,6 +107,7 @@ impl AudioCapture {
             buf.clear();
         }
         self.silence_triggered.store(false, Ordering::SeqCst);
+        set_paused(false);
 
         self.is_recording.store(true, Ordering::SeqCst);
 
@@ -145,8 +161,17 @@ impl AudioCapture {
         f32::from_bits(self.current_level.load(Ordering::Relaxed))
     }
 
+    /// Throw away everything captured so far (used to cut the start chime,
+    /// which the microphone hears, out of the recording).
+    pub fn discard_buffered(&self) {
+        if let Ok(mut buf) = self.buffer.lock() {
+            buf.clear();
+        }
+    }
+
     pub fn stop(self) -> Result<Vec<f32>> {
         self.is_recording.store(false, Ordering::SeqCst);
+        set_paused(false);
 
         // Give the capture thread time to finish
         thread::sleep(std::time::Duration::from_millis(100));
@@ -228,6 +253,10 @@ fn run_capture_loop(
     let mut decimator = Decimator::new(factor);
 
     let mut on_samples = move |mono: Vec<f32>| {
+        if is_paused() {
+            current_level.store(0f32.to_bits(), Ordering::Relaxed);
+            return;
+        }
         // Store audio data, and handle errors gracefully
         match buffer.lock() {
             Ok(mut buf) => decimator.push(&mono, &mut buf),
@@ -379,6 +408,14 @@ mod tests {
         }
         assert_eq!(streamed.len(), whole.len());
         assert!(streamed.iter().zip(&whole).all(|(a, b)| (a - b).abs() < 1e-5));
+    }
+
+    #[test]
+    fn pause_flag_round_trips() {
+        set_paused(true);
+        assert!(is_paused());
+        set_paused(false);
+        assert!(!is_paused());
     }
 
     #[test]

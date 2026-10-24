@@ -68,6 +68,15 @@ export const GearIcon = (p: IconProps) => (
     <circle cx="15.5" cy="16" r="2.7" />
   </Svg>
 );
+/** History: a clock with a back-arrow. */
+export const HistoryIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="13" cy="12" r="7.5" {...T} />
+    <circle cx="13" cy="12" r="7.5" />
+    <path d="M13 8v4.2l2.8 1.8" />
+    <path d="M3.5 12H6M4.6 9.2L3.5 12l1.6 2.6" strokeWidth={1.4} />
+  </Svg>
+);
 export const KeyboardIcon = (p: IconProps) => (
   <Svg {...p}>
     <rect x="2.8" y="6" width="18.4" height="12" rx="3" {...T} />

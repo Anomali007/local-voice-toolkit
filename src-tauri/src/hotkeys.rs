@@ -19,6 +19,8 @@ pub struct HotkeyState {
     pub is_recording: AtomicBool,
     pub audio_capture: tokio::sync::Mutex<Option<AudioCapture>>,
     pub started_at: std::sync::Mutex<Option<Instant>>,
+    /// App that was frontmost when the current dictation started (for History).
+    pub target_app: std::sync::Mutex<Option<FrontmostAppInfo>>,
 }
 
 impl Default for HotkeyState {
@@ -27,6 +29,7 @@ impl Default for HotkeyState {
             is_recording: AtomicBool::new(false),
             audio_capture: tokio::sync::Mutex::new(None),
             started_at: std::sync::Mutex::new(None),
+            target_app: std::sync::Mutex::new(None),
         }
     }
 }
@@ -258,6 +261,9 @@ pub(crate) fn start_dictation(app: &AppHandle) {
     // Capture frontmost app BEFORE showing overlay
     let target_app = accessibility::get_frontmost_app();
     tracing::debug!("Target app for dictation: {:?}", target_app);
+    if let Ok(mut guard) = state.target_app.lock() {
+        *guard = target_app.clone();
+    }
 
     // Show the dictation overlay
     if let Err(e) = overlay::show_overlay(app) {
@@ -306,6 +312,30 @@ pub(crate) fn start_dictation(app: &AppHandle) {
                 *guard = Some(capture);
                 drop(guard);
 
+                // Hold-Space-to-pause: only once the mic is live, and re-check
+                // afterwards - a stop/cancel that raced in already ran
+                // deactivate() and must not be undone.
+                if settings.hold_space_to_pause && crate::commands::permissions::accessibility_trusted() {
+                    crate::space_pause::activate(&app_handle);
+                    if !state_clone.is_recording.load(Ordering::SeqCst) {
+                        crate::space_pause::deactivate();
+                    }
+                }
+
+                // Start chime: played after the mic is open, then everything
+                // captured while it sounded is discarded (see sounds.rs).
+                if let Some((name, volume)) = crate::sounds::start_cue(&settings) {
+                    let st = Arc::clone(&state_clone);
+                    tauri::async_runtime::spawn(async move {
+                        let _ = tokio::task::spawn_blocking(move || crate::sounds::play_and_wait(&name, volume)).await;
+                        if st.is_recording.load(Ordering::SeqCst) {
+                            if let Some(capture) = st.audio_capture.lock().await.as_ref() {
+                                capture.discard_buffered();
+                            }
+                        }
+                    });
+                }
+
                 // Spawn audio level emission + silence watcher for the overlay
                 let app_for_levels = app_handle.clone();
                 let state_for_levels = Arc::clone(&state_clone);
@@ -348,6 +378,7 @@ pub(crate) fn start_dictation(app: &AppHandle) {
 fn abort_dictation(app: &AppHandle) {
     let state = app.state::<Arc<HotkeyState>>();
     state.is_recording.store(false, Ordering::SeqCst);
+    crate::space_pause::deactivate();
     unregister_cancel_shortcut(app);
     let _ = overlay::hide_overlay(app);
 }
@@ -364,6 +395,7 @@ pub(crate) fn cancel_dictation(app: &AppHandle) {
     }
 
     tracing::info!("Dictation cancelled");
+    crate::space_pause::deactivate();
     unregister_cancel_shortcut(app);
 
     if let Err(e) = app.emit("stt-cancelled", ()) {
@@ -376,6 +408,11 @@ pub(crate) fn cancel_dictation(app: &AppHandle) {
         let mut guard = state_clone.audio_capture.lock().await;
         if let Some(capture) = guard.take() {
             let _ = capture.stop();
+        }
+        drop(guard);
+        // After the mic is closed, so the cue can't be recorded.
+        if let Ok(settings) = get_settings() {
+            crate::sounds::play_cancel(&settings);
         }
     });
 }
@@ -393,6 +430,7 @@ pub(crate) fn stop_and_transcribe(app: &AppHandle) {
         return; // Already stopped or cancelled
     }
 
+    crate::space_pause::deactivate();
     unregister_cancel_shortcut(app);
 
     // Emit event to frontend
@@ -422,6 +460,11 @@ pub(crate) fn stop_and_transcribe(app: &AppHandle) {
                 Vec::new()
             }
         };
+
+        // Stop cue after the mic is closed, so it can't end up in the audio.
+        if let Ok(s) = get_settings() {
+            crate::sounds::play_stop(&s);
+        }
 
         if audio_data.is_empty() {
             tracing::warn!("No audio data captured");
@@ -493,6 +536,10 @@ pub(crate) fn stop_and_transcribe(app: &AppHandle) {
                         if let Err(e) = app_handle.emit("stt-result", &text) {
                             tracing::warn!("Failed to emit transcription result: {}", e);
                         }
+
+                        // History (no-op when off). Stores text on disk only; never logged.
+                        let target = state_clone.target_app.lock().ok().and_then(|g| g.clone());
+                        crate::history::record(&app_handle, &settings, &text, audio_data.len(), target.as_ref());
 
                         // Auto-paste if enabled
                         if settings.auto_paste && !text.is_empty() {
@@ -672,6 +719,9 @@ fn spawn_live_transcript(app: AppHandle, state: Arc<HotkeyState>, stt_model: Str
                     None => continue,
                 }
             };
+            if audio.len() < transcribed_len {
+                transcribed_len = 0; // buffer was cut (start-chime discard)
+            }
             // Wait for at least 1 s of audio and ~0.4 s of new audio.
             if audio.len() < 16_000 || audio.len() < transcribed_len + 6_400 {
                 continue;
