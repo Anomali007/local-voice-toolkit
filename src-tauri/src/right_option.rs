@@ -272,6 +272,12 @@ extern "C" {
     fn CGRequestListenEventAccess() -> bool;
 }
 
+/// Whether this app may watch keyboard events system-wide.
+pub fn input_monitoring_granted() -> bool {
+    // SAFETY: plain CoreGraphics call without arguments.
+    unsafe { CGPreflightListenEventAccess() }
+}
+
 /// Watching keys system-wide needs Input Monitoring on current macOS; ask
 /// once (shows the system prompt / adds the app to the list).
 fn ensure_input_monitoring() {

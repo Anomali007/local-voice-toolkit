@@ -4,6 +4,8 @@ use serde::Serialize;
 pub struct PermissionStatus {
     pub microphone: bool,
     pub accessibility: bool,
+    /// Needed to watch the right Option key system-wide.
+    pub input_monitoring: bool,
     /// Fine-grained TCC state: "authorized" | "denied" | "restricted" | "not_determined" | "unknown"
     pub microphone_status: String,
 }
@@ -137,6 +139,7 @@ pub fn check_permissions() -> PermissionStatus {
     PermissionStatus {
         microphone: mic == MicAuthStatus::Authorized,
         accessibility: check_accessibility(),
+        input_monitoring: crate::right_option::input_monitoring_granted(),
         microphone_status: mic.as_str().to_string(),
     }
 }
