@@ -198,7 +198,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
 function WelcomeStep({ onNext }: { onNext: () => void }) {
   return (
     <div className="text-center">
-      <div className="w-20 h-20 mx-auto mb-6 bg-accent text-accent-fg rounded-2xl flex items-center justify-center">
+      <div className="w-20 h-20 mx-auto mb-6 bg-brand rounded-2xl shadow-lg flex items-center justify-center">
         <span className="text-3xl font-semibold tracking-tight">B³</span>
       </div>
       <h1 className="text-2xl font-bold text-fg mb-2">Welcome to Blah³</h1>
@@ -500,7 +500,7 @@ function ModelItem({
         <div className="mt-2">
           <div className="h-1.5 bg-line rounded-full overflow-hidden">
             <div
-              className="h-full bg-accent transition-all duration-300"
+              className="h-full bg-brand transition-all duration-300"
               style={{ width: `${progress || 0}%` }}
             />
           </div>

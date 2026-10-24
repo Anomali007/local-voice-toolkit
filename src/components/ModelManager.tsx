@@ -169,7 +169,7 @@ function ModelCard({
           {isDownloading ? (
             <div className="flex w-28 items-center gap-2" role="progressbar" aria-valuenow={progress || 0} aria-valuemin={0} aria-valuemax={100} aria-label={`Downloading ${model.name}`}>
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
-                <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${progress || 0}%` }} />
+                <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${progress || 0}%` }} />
               </div>
               <span className="w-8 text-right text-xs tabular-nums text-muted">{progress || 0}%</span>
             </div>

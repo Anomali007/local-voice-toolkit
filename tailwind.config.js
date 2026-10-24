@@ -29,6 +29,7 @@ export default {
         subtle: "rgb(var(--c-subtle) / <alpha-value>)",
         accent: "rgb(var(--c-accent) / <alpha-value>)",
         "accent-fg": "rgb(var(--c-accent-fg) / <alpha-value>)",
+        warm: "rgb(var(--c-warm) / <alpha-value>)",
         rec: "rgb(var(--c-rec) / <alpha-value>)",
         ok: "rgb(var(--c-ok) / <alpha-value>)",
         warn: "rgb(var(--c-warn) / <alpha-value>)",

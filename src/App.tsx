@@ -87,7 +87,7 @@ function App() {
       >
         <div className="mb-5 flex items-center gap-2 px-2">
           <span
-            className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-accent-fg"
+            className="flex h-6 w-6 items-center justify-center rounded-md bg-brand shadow-sm"
             aria-hidden="true"
           >
             <MicIcon className="h-3.5 w-3.5" />
@@ -105,7 +105,7 @@ function App() {
                   aria-current={active ? "page" : undefined}
                   className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors ${
                     active
-                      ? "bg-accent text-accent-fg"
+                      ? "bg-brand shadow-sm"
                       : "text-fg/80 hover:bg-fg/[0.06]"
                   }`}
                 >

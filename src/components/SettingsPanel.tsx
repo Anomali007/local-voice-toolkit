@@ -4,7 +4,7 @@ import { enable as enableAutostart, disable as disableAutostart, isEnabled as is
 import { open } from "@tauri-apps/plugin-shell";
 import HotkeyRecorder from "./HotkeyRecorder";
 import { usePermissions } from "../hooks/usePermissions";
-import { AccessibilityIcon, CheckIcon, MicIcon, Section, SettingRow, Spinner, Toggle } from "./ui";
+import { AccessibilityIcon, CheckIcon, KeyboardIcon, MicIcon, Section, SettingRow, Spinner, Toggle } from "./ui";
 
 interface Settings {
   stt_hotkey: string;
@@ -113,12 +113,14 @@ export default function SettingsPanel() {
         await invoke("open_system_settings", { pane: "microphone" });
       } else if (pane === "Privacy_Accessibility") {
         await invoke("open_system_settings", { pane: "accessibility" });
+      } else if (pane === "Privacy_InputMonitoring") {
+        await invoke("open_system_settings", { pane: "input_monitoring" });
       }
     } catch (e) {
       console.error("Failed to open system settings:", e);
       // Last resort fallback
       try {
-        await open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+        await open(`x-apple.systempreferences:com.apple.preference.security?${pane}`);
       } catch {
         console.error("All methods to open system settings failed");
       }
@@ -301,6 +303,15 @@ export default function SettingsPanel() {
             granted={permissions?.accessibility}
             onOpen={() => openSystemPreferences("Privacy_Accessibility")}
           />
+          {permissions?.input_monitoring !== undefined && (
+            <PermissionRow
+              Icon={KeyboardIcon}
+              title="Input Monitoring"
+              description="Needed for the right Option key"
+              granted={permissions.input_monitoring}
+              onOpen={() => openSystemPreferences("Privacy_InputMonitoring")}
+            />
+          )}
         </div>
       </Section>
 
@@ -356,7 +367,7 @@ function PermissionRow({
   return (
     <div className="row">
       <div className="flex min-w-0 items-center gap-3">
-        <Icon className="h-5 w-5 shrink-0 text-muted" />
+        <Icon className="h-5 w-5 shrink-0 text-accent" />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <p className="text-[13px]">{title}</p>

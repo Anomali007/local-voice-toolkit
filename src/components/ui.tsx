@@ -22,35 +22,57 @@ function Svg({ children, ...props }: IconProps) {
   );
 }
 
+/* Custom set: 24px grid, 1.7 round stroke, plus one translucent "body" fill per icon
+   (currentColor at 22%) so every glyph shares the same two-tone construction. */
+const T = { fill: "currentColor", fillOpacity: 0.22, stroke: "none" } as const;
+
 export const MicIcon = (p: IconProps) => (
   <Svg {...p}>
-    <rect x="9" y="3" width="6" height="11" rx="3" />
-    <path d="M5.5 11.5a6.5 6.5 0 0013 0M12 18v3" />
+    <rect x="8.5" y="2.8" width="7" height="12" rx="3.5" {...T} />
+    <rect x="8.5" y="2.8" width="7" height="12" rx="3.5" />
+    <path d="M4.8 11.2c0 3.8 3 6.8 7.2 6.8s7.2-3 7.2-6.8M12 18v3M8.8 21h6.4" />
+    <path d="M12 6.4v2.4" strokeWidth={1.4} />
   </Svg>
 );
+/** Words: a speech bubble holding two lines of text. */
 export const BookIcon = (p: IconProps) => (
   <Svg {...p}>
-    <path d="M5 4.5A1.5 1.5 0 016.5 3H19v15H6.5A1.5 1.5 0 005 19.5v-15z" />
-    <path d="M5 19.5A1.5 1.5 0 006.5 21H19v-3M9 7.5h6" />
+    <path d="M5 4h14a2 2 0 012 2v9a2 2 0 01-2 2h-6.5L8 20.8V17H5a2 2 0 01-2-2V6a2 2 0 012-2z" {...T} />
+    <path d="M5 4h14a2 2 0 012 2v9a2 2 0 01-2 2h-6.5L8 20.8V17H5a2 2 0 01-2-2V6a2 2 0 012-2z" />
+    <path d="M7.5 9h9M7.5 12.5h5" />
   </Svg>
 );
+/** Reader: a cone with sound bars instead of the stock "waves". */
 export const SpeakerIcon = (p: IconProps) => (
   <Svg {...p}>
-    <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4z" />
-    <path d="M15.5 9a4 4 0 010 6M18 6.5a7.5 7.5 0 010 11" />
+    <path d="M3.5 9.5h3L11 5.5v13l-4.5-4h-3a1 1 0 01-1-1v-3a1 1 0 011-1z" {...T} />
+    <path d="M3.5 9.5h3L11 5.5v13l-4.5-4h-3a1 1 0 01-1-1v-3a1 1 0 011-1z" />
+    <path d="M14.6 9.6v4.8M17.6 7.2v9.6M20.6 10v4" />
   </Svg>
 );
+/** Models: three stacked planes. */
 export const ChipIcon = (p: IconProps) => (
   <Svg {...p}>
-    <rect x="6" y="6" width="12" height="12" rx="2" />
-    <rect x="9.5" y="9.5" width="5" height="5" rx="1" />
-    <path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" />
+    <path d="M12 3.2l8.6 4.3L12 11.8 3.4 7.5 12 3.2z" {...T} />
+    <path d="M12 3.2l8.6 4.3L12 11.8 3.4 7.5 12 3.2z" />
+    <path d="M3.4 12l8.6 4.3 8.6-4.3M3.4 16.5L12 20.8l8.6-4.3" />
   </Svg>
 );
+/** Settings: two sliders. */
 export const GearIcon = (p: IconProps) => (
   <Svg {...p}>
-    <circle cx="12" cy="12" r="3" />
-    <path d="M12 3v2.2M12 18.8V21M4.6 7.5l1.9 1.1M17.5 15.4l1.9 1.1M4.6 16.5l1.9-1.1M17.5 8.6l1.9-1.1" />
+    <path d="M4 8h16M4 16h16" />
+    <circle cx="9" cy="8" r="2.7" {...T} />
+    <circle cx="15.5" cy="16" r="2.7" {...T} />
+    <circle cx="9" cy="8" r="2.7" />
+    <circle cx="15.5" cy="16" r="2.7" />
+  </Svg>
+);
+export const KeyboardIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="2.8" y="6" width="18.4" height="12" rx="3" {...T} />
+    <rect x="2.8" y="6" width="18.4" height="12" rx="3" />
+    <path d="M6.8 10h.01M10 10h.01M14 10h.01M17.2 10h.01M8 14.2h8" />
   </Svg>
 );
 export const StopIcon = (p: IconProps) => (
@@ -180,7 +202,7 @@ export function Toggle({
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={`relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors duration-150 ${
-        checked ? "bg-accent" : "bg-subtle/40"
+        checked ? "bg-brand" : "bg-subtle/40"
       }`}
     >
       <span
@@ -201,7 +223,7 @@ export function Keys({ hotkey, large = false }: { hotkey: string; large?: boolea
       {keys.map((k, i) => (
         <kbd
           key={`${k}-${i}`}
-          className={`kbd ${large ? "!min-w-[2.6rem] !rounded-lg !px-3 !py-1.5 !text-base" : ""}`}
+          className={`kbd ${large ? "!min-w-[2.6rem] !rounded-lg !px-3 !py-1.5 !text-[20px]" : ""}`}
         >
           {k}
         </kbd>

@@ -5,17 +5,20 @@
 /* Design tokens: space-separated RGB so Tailwind can apply alpha. */
 :root {
   color-scheme: light dark;
-  --c-canvas: 246 246 248;
+  --c-canvas: 244 247 251;
   --c-surface: 255 255 255;
-  --c-sunken: 238 238 242;
-  --c-sidebar: 233 233 239;
-  --c-line: 218 218 226;
+  --c-sunken: 235 240 248;
+  --c-sidebar: 232 238 247;
+  --c-line: 215 224 237;
   --c-fg: 29 29 33;
   --c-muted: 99 99 110;
   --c-subtle: 140 140 152;
-  --c-accent: 84 82 214;
+  --c-accent: 2 132 199;
   --c-accent-fg: 255 255 255;
-  --c-rec: 222 54 44;
+  --c-rec: 232 58 52;
+  --c-warm: 240 96 40;
+  --brand: linear-gradient(135deg, #22b8f7 0%, #0a84e0 52%, #5a5cf0 100%);
+  --brand-warm: linear-gradient(135deg, #ff8a3d 0%, #ff4d6d 100%);
   --c-ok: 28 140 70;
   --c-warn: 176 98 0;
   --c-danger: 200 40 40;
@@ -23,17 +26,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --c-canvas: 28 28 31;
-    --c-surface: 43 43 47;
-    --c-sunken: 33 33 36;
-    --c-sidebar: 37 37 41;
-    --c-line: 66 66 72;
+    --c-canvas: 17 21 30;
+    --c-surface: 29 35 48;
+    --c-sunken: 22 27 38;
+    --c-sidebar: 22 27 39;
+    --c-line: 52 61 80;
     --c-fg: 244 244 247;
     --c-muted: 168 168 180;
     --c-subtle: 128 128 140;
-    --c-accent: 128 126 255;
-    --c-accent-fg: 18 18 40;
+    --c-accent: 56 189 248;
+    --c-accent-fg: 6 28 46;
     --c-rec: 255 82 70;
+    --c-warm: 255 138 74;
     --c-ok: 70 200 120;
     --c-warn: 240 168 60;
     --c-danger: 255 110 100;
@@ -42,8 +46,6 @@
 
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, sans-serif;
-  font-size: 13px;
-  line-height: 1.45;
   font-weight: 400;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -53,6 +55,8 @@
 
 body {
   margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
   min-width: 320px;
   min-height: 100vh;
   background-color: rgb(var(--c-canvas));
@@ -140,8 +144,13 @@ html.overlay-window body {
     @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium
       transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-45;
   }
+  .bg-brand {
+    background-image: var(--brand);
+    color: #fff;
+  }
   .btn-primary {
-    @apply btn bg-accent text-accent-fg hover:brightness-110 active:brightness-95;
+    @apply btn bg-brand hover:brightness-110 active:brightness-95;
+    box-shadow: 0 1px 2px rgb(10 100 200 / 0.35), inset 0 0.5px 0 rgb(255 255 255 / 0.35);
   }
   .btn-secondary {
     @apply btn bg-sunken text-fg hover:bg-line/60;
@@ -208,8 +217,8 @@ html.overlay-window body {
   }
   .tile[aria-checked="true"],
   .tile[aria-pressed="true"] {
-    box-shadow: 0 0 0 2px rgb(var(--c-accent));
-    background: rgb(var(--c-accent) / 0.08);
+    box-shadow: 0 0 0 2px rgb(var(--c-accent)), 0 4px 14px rgb(var(--c-accent) / 0.25);
+    background: rgb(var(--c-accent) / 0.1);
   }
 
   /* Alerts */
@@ -225,6 +234,47 @@ html.overlay-window body {
     @apply h-4 w-4 appearance-none rounded-full bg-white;
     box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.25), 0 1px 3px rgb(0 0 0 / 0.3);
   }
+}
+
+/* Overlay: moving gradient ring, live pulse, idle breathing. */
+@keyframes ring-shift {
+  from { background-position: 0% 50%; }
+  to { background-position: 300% 50%; }
+}
+@keyframes live-ping {
+  0% { box-shadow: 0 0 0 0 rgb(255 255 255 / 0.65); }
+  80%, 100% { box-shadow: 0 0 0 7px rgb(255 255 255 / 0); }
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.75; }
+}
+.overlay-ring {
+  animation: ring-shift 6s linear infinite;
+}
+.overlay-breathe {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+.live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  background-image: linear-gradient(135deg, #ff8a3d, #ff3d7f);
+  box-shadow: 0 2px 10px rgb(255 61 127 / 0.5);
+}
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #fff;
+  animation: live-ping 1.3s ease-out infinite;
 }
 
 @layer utilities {

@@ -9,6 +9,7 @@ import {
   CheckIcon,
   CopyIcon,
   Keys,
+  KeyboardIcon,
   MicIcon,
   Section,
   Spinner,
@@ -40,7 +41,7 @@ export default function DictationPanel() {
     }
   };
 
-  const openPane = async (pane: "microphone" | "accessibility") => {
+  const openPane = async (pane: "microphone" | "accessibility" | "input_monitoring") => {
     try {
       await invoke("open_system_settings", { pane });
     } catch (err) {
@@ -48,7 +49,9 @@ export default function DictationPanel() {
     }
   };
 
-  const missing = permissions && (!permissions.microphone || !permissions.accessibility);
+  const missing =
+    permissions &&
+    (!permissions.microphone || !permissions.accessibility || permissions.input_monitoring === false);
   const headline = isRecording
     ? "Listening…"
     : isTranscribing
@@ -60,8 +63,19 @@ export default function DictationPanel() {
   return (
     <div className="space-y-6">
       {/* Hero */}
-      <section className="card overflow-hidden">
-        <div className="flex flex-col items-center px-6 pb-6 pt-8 text-center">
+      <section className="card relative overflow-hidden">
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-x-0 top-0 h-40 transition-opacity duration-300 ${
+            isRecording ? "opacity-40" : "opacity-[0.16]"
+          }`}
+          style={{
+            backgroundImage: isRecording
+              ? "radial-gradient(ellipse at 50% -20%, rgb(var(--c-rec)), transparent 70%)"
+              : "radial-gradient(ellipse at 50% -20%, rgb(var(--c-accent)), transparent 70%)",
+          }}
+        />
+        <div className="relative flex flex-col items-center px-6 pb-6 pt-8 text-center">
           <h1 className="page-title" aria-live="polite">
             {headline}
           </h1>
@@ -79,7 +93,7 @@ export default function DictationPanel() {
             <p className="mt-3 text-[13px] text-muted">Dictate into any app with a shortcut.</p>
           )}
 
-          <div className="mt-6 h-10 w-full max-w-sm">
+          <div className={`w-full max-w-sm ${isRecording || isTranscribing ? "mt-6 h-10" : ""}`}>
             {isRecording ? (
               <div className="h-10 rounded-lg bg-rec/10 px-3">
                 <WaveformViz isActive={isRecording} />
@@ -94,7 +108,7 @@ export default function DictationPanel() {
           <button
             onClick={isRecording ? stopRecording : startRecording}
             disabled={isTranscribing}
-            className={`${isRecording ? "btn-danger-solid" : "btn-secondary"} btn-lg mt-2`}
+            className={`${isRecording ? "btn-danger-solid" : "btn-secondary"} btn-lg mt-6`}
           >
             {isRecording ? (
               <>
@@ -159,6 +173,15 @@ export default function DictationPanel() {
             granted={permissions?.accessibility}
             onFix={() => openPane("accessibility")}
           />
+          {permissions?.input_monitoring !== undefined && (
+            <PermissionLine
+              Icon={KeyboardIcon}
+              label="Input Monitoring"
+              hint="Needed for the right Option key"
+              granted={permissions.input_monitoring}
+              onFix={() => openPane("input_monitoring")}
+            />
+          )}
         </div>
       </Section>
     </div>
@@ -168,19 +191,24 @@ export default function DictationPanel() {
 function PermissionLine({
   Icon,
   label,
+  hint,
   granted,
   onFix,
 }: {
   Icon: (p: { className?: string }) => JSX.Element;
   label: string;
+  hint?: string;
   granted?: boolean;
   onFix: () => void;
 }) {
   return (
     <div className="row">
       <span className="flex items-center gap-2.5">
-        <Icon className="h-[18px] w-[18px] text-muted" />
-        {label}
+        <Icon className="h-[18px] w-[18px] text-accent" />
+        <span>
+          {label}
+          {hint && <span className="block text-xs text-muted">{hint}</span>}
+        </span>
       </span>
       {granted === undefined ? (
         <span className="text-xs text-subtle">Checking…</span>
