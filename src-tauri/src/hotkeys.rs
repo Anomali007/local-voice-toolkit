@@ -328,6 +328,8 @@ pub(crate) fn start_dictation(app: &AppHandle) {
                         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                     }
                 });
+
+                spawn_live_transcript(app_handle.clone(), Arc::clone(&state_clone), settings.stt_model.clone());
             }
             Err(e) => {
                 tracing::error!("Failed to create audio capture: {}", e);
@@ -565,6 +567,89 @@ fn unregister_cancel_shortcut(app: &AppHandle) {
     }
 }
 
+/// Bumped per dictation so a live-transcript loop from an earlier session
+/// stops instead of overwriting the new one's preview.
+static LIVE_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Seconds of trailing audio the live preview transcribes. Whisper works in
+/// 30 s windows; the final transcription after stop uses the whole recording.
+const LIVE_WINDOW_SECS: usize = 25;
+
+/// Whisper's markers for non-speech ("[BLANK_AUDIO]", "(music)") are noise
+/// in a live preview.
+fn strip_non_speech(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut depth = 0i32;
+    for c in text.chars() {
+        match c {
+            '[' | '(' => depth += 1,
+            ']' | ')' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// While recording, re-transcribe the audio so far every ~0.7 s and send it
+/// to the overlay as `stt-partial-result`, so words appear while speaking.
+fn spawn_live_transcript(app: AppHandle, state: Arc<HotkeyState>, stt_model: String) {
+    let session = LIVE_SESSION.fetch_add(1, Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn(async move {
+        let Some(model_path) = dirs::data_dir()
+            .map(|d| d.join("com.blahcubed.app").join("models").join("stt").join(&stt_model))
+            .filter(|p| p.exists())
+        else {
+            return;
+        };
+        let path = model_path.to_string_lossy().to_string();
+        let engine = match tokio::task::spawn_blocking(move || {
+            crate::engines::whisper::get_or_load_cached(&path)
+        })
+        .await
+        {
+            Ok(Ok(engine)) => engine,
+            _ => return, // The final transcription reports model errors.
+        };
+
+        let current = |state: &HotkeyState| {
+            state.is_recording.load(Ordering::SeqCst) && LIVE_SESSION.load(Ordering::SeqCst) == session
+        };
+        let mut transcribed_len = 0usize;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            if !current(&state) {
+                break;
+            }
+            let audio = {
+                let guard = state.audio_capture.lock().await;
+                match guard.as_ref() {
+                    Some(capture) => capture.snapshot(),
+                    None => continue,
+                }
+            };
+            // Wait for at least 1 s of audio and ~0.4 s of new audio.
+            if audio.len() < 16_000 || audio.len() < transcribed_len + 6_400 {
+                continue;
+            }
+            transcribed_len = audio.len();
+            let window = LIVE_WINDOW_SECS * 16_000;
+            let truncated = audio.len() > window;
+            let tail = if truncated { audio[audio.len() - window..].to_vec() } else { audio };
+            let engine = Arc::clone(&engine);
+            let text = match tokio::task::spawn_blocking(move || engine.transcribe(&tail)).await {
+                Ok(Ok(text)) => strip_non_speech(&text),
+                _ => continue,
+            };
+            if text.is_empty() || !current(&state) {
+                continue;
+            }
+            let shown = if truncated { format!("… {}", text) } else { text };
+            let _ = app.emit("stt-partial-result", shown);
+        }
+    });
+}
+
 /// Handle TTS (read aloud) shortcut: press to read the selection, press
 /// again while it is reading to stop.
 fn handle_tts_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutState) {
@@ -747,6 +832,14 @@ pub(crate) fn parse_shortcut(shortcut_str: &str) -> Option<Shortcut> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn live_preview_drops_non_speech_markers() {
+        assert_eq!(super::strip_non_speech("[BLANK_AUDIO]"), "");
+        assert_eq!(super::strip_non_speech(" Hello (music) world [inaudible] "), "Hello world");
+        assert_eq!(super::strip_non_speech("It's 10:30, okay?"), "It's 10:30, okay?");
+    }
+
     use super::*;
 
     /// Every key name HotkeyRecorder's KEY_TO_BACKEND can emit.

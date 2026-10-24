@@ -16,12 +16,59 @@ fn top_center(monitor_x: i32, monitor_y: i32, monitor_width: u32, window_width: 
     (x, monitor_y + 50) // 50px from the top of that monitor
 }
 
+/// Let the overlay float over full-screen apps and appear on every Space.
+/// Tauri's visibleOnAllWorkspaces sets only CanJoinAllSpaces, so a dictation
+/// started inside a full-screen app (or on another desktop) showed nothing.
+#[cfg(target_os = "macos")]
+fn float_over_everything(window: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    // NSWindowCollectionBehavior: CanJoinAllSpaces | Stationary |
+    // IgnoresCycle | FullScreenAuxiliary
+    const BEHAVIOR: usize = (1 << 0) | (1 << 4) | (1 << 6) | (1 << 8);
+    // NSStatusWindowLevel: above normal and full-screen windows
+    const STATUS_LEVEL: isize = 25;
+
+    match window.ns_window() {
+        Ok(ptr) if !ptr.is_null() => {
+            let ns_window = ptr as *mut AnyObject;
+            // SAFETY: a live NSWindow owned by Tauri; called on the main thread.
+            unsafe {
+                let _: () = msg_send![ns_window, setCollectionBehavior: BEHAVIOR];
+                let _: () = msg_send![ns_window, setLevel: STATUS_LEVEL];
+            }
+        }
+        _ => tracing::warn!("Overlay has no NSWindow to configure"),
+    }
+}
+
+/// Configure the overlay window once at startup.
+pub fn setup_overlay(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Some(window) = app.get_webview_window("dictation-overlay") {
+        float_over_everything(&window);
+    }
+}
+
 /// Show the dictation overlay window positioned at top-center of screen
 pub fn show_overlay(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     OVERLAY_GENERATION.fetch_add(1, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("dictation-overlay") {
+        #[cfg(target_os = "macos")]
+        float_over_everything(&window);
+
         // Get the primary monitor to center horizontally at top
-        if let Some(monitor) = window.current_monitor()? {
+        // The monitor with the mouse is where the user is looking.
+        let cursor_monitor = app
+            .cursor_position()
+            .ok()
+            .and_then(|p| app.monitor_from_point(p.x, p.y).ok().flatten());
+        let monitor = match cursor_monitor {
+            Some(m) => Some(m),
+            None => window.current_monitor()?.or(window.primary_monitor()?),
+        };
+        if let Some(monitor) = monitor {
             let monitor_size = monitor.size();
             let window_size = window.outer_size()?;
 

@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -25,7 +26,7 @@
         "label": "dictation-overlay",
         "url": "overlay.html",
         "width": 400,
-        "height": 200,
+        "height": 230,
         "resizable": false,
         "decorations": false,
         "transparent": true,

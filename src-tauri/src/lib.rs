@@ -16,12 +16,29 @@ use tauri::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub fn run() {
-    // Initialize tracing
+    // Initialize tracing: stdout, plus a log file, since a launched app's
+    // stdout goes nowhere (~/Library/Logs/Blah³/blah3.log).
+    let log_file = dirs::home_dir()
+        .map(|home| home.join("Library/Logs/Blah³"))
+        .and_then(|dir| {
+            std::fs::create_dir_all(&dir).ok()?;
+            let path = dir.join("blah3.log");
+            // Start fresh when the log grows past 5 MB.
+            if std::fs::metadata(&path).is_ok_and(|m| m.len() > 5_000_000) {
+                let _ = std::fs::rename(&path, dir.join("blah3.old.log"));
+            }
+            std::fs::OpenOptions::new().create(true).append(true).open(path).ok()
+        });
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             std::env::var("RUST_LOG").unwrap_or_else(|_| "blah3=debug,info".into()),
         ))
         .with(tracing_subscriber::fmt::layer())
+        .with(log_file.map(|file| {
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(std::sync::Mutex::new(file))
+        }))
         .init();
 
     tracing::info!("Starting Blah³...");
@@ -37,6 +54,7 @@ pub fn run() {
         .setup(|app| {
             // Menu bar icon with its menu
             tray::create(app.handle())?;
+            overlay::setup_overlay(app.handle());
 
             // Register global hotkeys
             if let Err(e) = hotkeys::register_hotkeys(app.handle()) {

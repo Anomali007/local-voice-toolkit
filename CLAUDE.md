@@ -276,6 +276,17 @@ CARGO_TARGET_DIR=~/.cache/b3t pnpm tauri build
 # bundle lands in ~/.cache/b3t/release/bundle/macos/Blah³.app
 ```
 
+**Sign local builds with a real identity, or macOS permissions reset on every build.**
+An ad-hoc build gets a new code identity each time, so Accessibility, Input
+Monitoring and Microphone grants stop applying after a rebuild (paste fails,
+the right-Option trigger goes deaf). Sign with your own certificate:
+```bash
+APPLE_SIGNING_IDENTITY="Developer ID Application: <Your Name> (<TEAMID>)" \
+  CARGO_TARGET_DIR=~/.cache/b3t pnpm tauri build --bundles app
+```
+`security find-identity -v -p codesigning` lists the identities on your Mac.
+Logs: `~/Library/Logs/Blah³/blah3.log`.
+
 ```bash
 # Clean build artifacts
 pnpm clean

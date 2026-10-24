@@ -166,6 +166,16 @@ impl AudioCapture {
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
+
+    /// Copy of the audio recorded so far, at the Whisper rate, for the live
+    /// transcript shown while the user is still speaking.
+    pub fn snapshot(&self) -> Vec<f32> {
+        let buffer = match self.buffer.lock() {
+            Ok(buffer) => buffer.clone(),
+            Err(_) => return Vec::new(),
+        };
+        convert_rate(&buffer, self.device_rate.load(Ordering::SeqCst), self.sample_rate)
+    }
 }
 
 fn run_capture_loop(

@@ -12,6 +12,14 @@ interface RecordingStartedPayload {
   target_app: FrontmostAppInfo | null;
 }
 
+/** Keep the newest words visible: show only the end of a long transcript. */
+export function liveTail(text: string, max = 220): string {
+  if (text.length <= max) return text;
+  const cut = text.slice(text.length - max);
+  const space = cut.indexOf(" ");
+  return "…" + (space > 0 ? cut.slice(space) : cut);
+}
+
 export default function DictationOverlay() {
   const [state, setState] = useState<OverlayState>("recording");
   const [targetApp, setTargetApp] = useState<string | null>(null);
@@ -276,12 +284,17 @@ export default function DictationOverlay() {
         </div>
 
         {/* Bottom: Transcript area */}
-        <div className="px-4 py-2.5 border-t border-white/5 min-h-[40px] max-h-[72px]">
-          {state === "recording" && (
-            <p className="text-xs text-white/40 italic">
-              Listening... tap hotkey or pause to finish · Esc to cancel
-            </p>
-          )}
+        <div className="px-4 py-2.5 border-t border-white/5 min-h-[40px] max-h-[96px]">
+          {state === "recording" &&
+            (partialResult ? (
+              <p className="text-sm text-white/90 leading-snug line-clamp-4 break-words">
+                {liveTail(partialResult)}
+              </p>
+            ) : (
+              <p className="text-xs text-white/40 italic">
+                Listening… tap the hotkey again to finish and paste · Esc to cancel
+              </p>
+            ))}
           {state === "transcribing" && (
             partialResult ? (
               <p className="text-sm text-white/90 leading-snug line-clamp-3 break-words">
