@@ -49,6 +49,8 @@ export default function DictationOverlay() {
   const [result, setResult] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [partialResult, setPartialResult] = useState<string>("");
+  // Hold-Space pause (stt-paused / stt-resumed from the backend).
+  const [paused, setPaused] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glowRef = useRef<HTMLDivElement>(null);
@@ -56,6 +58,7 @@ export default function DictationOverlay() {
   const animationRef = useRef<number | null>(null);
   const levelHistoryRef = useRef<number[]>(new Array(40).fill(0));
   const startTimeRef = useRef<number>(Date.now());
+  const elapsedTimeRef = useRef(0);
 
   // Size and line count come from settings; re-read each time the overlay is
   // about to be used so changes apply without a restart.
@@ -101,6 +104,7 @@ export default function DictationOverlay() {
           setMode("dictation");
           loadSettings();
           setState("recording");
+          setPaused(false);
           setResult("");
           setError("");
           setPartialResult("");
@@ -118,11 +122,16 @@ export default function DictationOverlay() {
       unlisteners.push(
         await listen("stt-recording-stopped", () => {
           // Stay in recording state until transcribing starts
+          setPaused(false);
         })
       );
 
+      unlisteners.push(await listen("stt-paused", () => setPaused(true)));
+      unlisteners.push(await listen("stt-resumed", () => setPaused(false)));
+
       unlisteners.push(
         await listen("stt-transcribing", () => {
+          setPaused(false);
           setState("transcribing");
         })
       );
@@ -167,16 +176,19 @@ export default function DictationOverlay() {
     };
   }, []);
 
-  // Elapsed time counter during recording
+  // Elapsed time counter during recording (frozen while paused: the clock
+  // shows recorded time, so the paused stretch is skipped).
   useEffect(() => {
-    if (state !== "recording") return;
+    if (state !== "recording" || paused) return;
 
+    // Shift the start so the time already shown keeps counting from there.
+    startTimeRef.current = Date.now() - elapsedTimeRef.current * 1000;
     const interval = setInterval(() => {
       setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 1000));
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [state]);
+  }, [state, paused]);
 
   // Waveform + glow, driven by real audio levels. Only transforms/opacity are
   // touched per frame, and the loop only runs while recording.
@@ -252,6 +264,8 @@ export default function DictationOverlay() {
     };
   }, [state]);
 
+  elapsedTimeRef.current = elapsedTime;
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -297,7 +311,18 @@ export default function DictationOverlay() {
             {/* Status row */}
             <div className="flex items-center justify-between px-4 pb-1 pt-3">
               <div className="flex items-center gap-2">
-                {state === "recording" ? (
+                {state === "recording" && paused ? (
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+                    style={{ background: "rgba(255, 194, 71, 0.16)", color: DOTS.transcribing }}
+                  >
+                    <span className="flex gap-[2px]" aria-hidden="true">
+                      <span className="h-2.5 w-[2.5px] rounded-sm bg-current" />
+                      <span className="h-2.5 w-[2.5px] rounded-sm bg-current" />
+                    </span>
+                    Paused
+                  </span>
+                ) : state === "recording" ? (
                   <span className="live-chip">
                     <span className="live-dot" />
                     Live
@@ -305,7 +330,9 @@ export default function DictationOverlay() {
                 ) : (
                   <span className="h-2 w-2 rounded-full" style={{ background: DOTS[state] }} />
                 )}
-                <span className="text-[12px] font-semibold tracking-[-0.005em] text-white/90">{getStateLabel(state)}</span>
+                {!(state === "recording" && paused) && (
+                  <span className="text-[12px] font-semibold tracking-[-0.005em] text-white/90">{getStateLabel(state)}</span>
+                )}
                 {targetApp && state === "recording" && (
                   <span className="max-w-[130px] truncate text-[12px] text-white/45">in {targetApp}</span>
                 )}
@@ -318,7 +345,13 @@ export default function DictationOverlay() {
             {/* Waveform / status glyph */}
             {state === "recording" && (
               <div className="px-4 pt-1.5">
-                <canvas ref={canvasRef} width={672} height={80} className="h-10 w-full" />
+                <canvas
+                  ref={canvasRef}
+                  width={672}
+                  height={80}
+                  className="h-10 w-full transition-opacity duration-150"
+                  style={{ opacity: paused ? 0.3 : 1 }}
+                />
               </div>
             )}
             {state === "transcribing" && (
@@ -354,9 +387,14 @@ export default function DictationOverlay() {
             <div className="min-h-[56px] px-4 pb-4 pt-2.5">
               {state === "recording" &&
                 (partialResult ? (
-                  <p style={clamp} className="break-words text-[17px] font-semibold leading-snug tracking-[-0.012em] text-white">
-                    {liveTail(partialResult, tailChars(lines))}
-                  </p>
+                  <div style={{ opacity: paused ? 0.55 : 1 }}>
+                    <p style={clamp} className="break-words text-[17px] font-semibold leading-snug tracking-[-0.012em] text-white">
+                      {liveTail(partialResult, tailChars(lines))}
+                    </p>
+                    {paused && <p className="mt-1.5 text-[12px] text-white/70">Paused · release Space to continue</p>}
+                  </div>
+                ) : paused ? (
+                  <p className="text-[12px] text-white/55">Paused · release Space to continue</p>
                 ) : (
                   <p className="text-[12px] text-white/55">
                     Listening… tap the hotkey again to finish and paste · Esc to cancel

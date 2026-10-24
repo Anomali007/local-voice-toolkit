@@ -48,6 +48,32 @@ describe('DictationOverlay', () => {
     expect(screen.getByText('Hello, this is a live test.')).toBeInTheDocument();
   });
 
+  it('shows Paused on stt-paused and returns on stt-resumed', async () => {
+    render(<DictationOverlay />);
+    await vi.waitFor(() => expect(handlers.has('stt-paused')).toBe(true));
+    fire('stt-recording-started', { target_app: null });
+    expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+    fire('stt-paused');
+    expect(screen.getByText('Paused')).toBeInTheDocument();
+    expect(screen.getByText(/release Space to continue/)).toBeInTheDocument();
+    expect(screen.queryByText('Recording')).not.toBeInTheDocument();
+    fire('stt-resumed');
+    expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+    expect(screen.getByText('Recording')).toBeInTheDocument();
+  });
+
+  it('a stop or a new recording can never leave the overlay paused', async () => {
+    render(<DictationOverlay />);
+    await vi.waitFor(() => expect(handlers.has('stt-paused')).toBe(true));
+    fire('stt-recording-started', { target_app: null });
+    fire('stt-paused');
+    fire('stt-recording-stopped');
+    expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+    fire('stt-paused');
+    fire('stt-recording-started', { target_app: null });
+    expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+  });
+
   it('a new recording clears the previous live text', async () => {
     render(<DictationOverlay />);
     await vi.waitFor(() => expect(handlers.has('stt-partial-result')).toBe(true));

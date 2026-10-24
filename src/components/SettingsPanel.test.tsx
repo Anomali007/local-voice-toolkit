@@ -119,3 +119,70 @@ describe('SettingsPanel overlay section', () => {
     expect(invoke).toHaveBeenCalledWith('preview_overlay');
   });
 });
+
+describe('SettingsPanel dictation extras', () => {
+  const mockBackend = (settings: Record<string, unknown> = base) =>
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_settings') return settings;
+      if (cmd === 'check_permissions') return { microphone: true, accessibility: true };
+      if (cmd === 'list_system_sounds') return ['Glass', 'Pop', 'Tink'];
+      return undefined;
+    });
+  const lastSaved = () => {
+    const calls = vi.mocked(invoke).mock.calls.filter(([c]) => c === 'update_settings');
+    return (calls[calls.length - 1]?.[1] as { settings: Record<string, unknown> }).settings;
+  };
+
+  it('older settings files fall back to the extras defaults', async () => {
+    mockBackend();
+    render(<SettingsPanel />);
+    await screen.findByText('Sounds');
+    expect(screen.getByRole('switch', { name: 'Remove filler words' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('switch', { name: 'Hold Space to pause' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('switch', { name: 'Play start sound' })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByRole('switch', { name: 'Save history' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('saves the filler, pause and history switches', async () => {
+    mockBackend();
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await screen.findByText('Sounds');
+    await user.click(screen.getByRole('switch', { name: 'Remove filler words' }));
+    await vi.waitFor(() => expect(lastSaved().remove_fillers).toBe(false));
+    await user.click(screen.getByRole('switch', { name: 'Hold Space to pause' }));
+    await vi.waitFor(() => expect(lastSaved().hold_space_to_pause).toBe(false));
+    await user.click(screen.getByRole('switch', { name: 'Save history' }));
+    await vi.waitFor(() => expect(lastSaved().history_enabled).toBe(false));
+  });
+
+  it('chooses a sound, previews it at the chosen volume', async () => {
+    mockBackend({ ...base, sound_on_start: true, sound_start_name: 'Tink', sound_volume: 0.8 });
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await screen.findByText('Sounds');
+    fireEvent.change(screen.getByLabelText('Start sound'), { target: { value: 'Glass' } });
+    await vi.waitFor(() => expect(lastSaved().sound_start_name).toBe('Glass'));
+    await user.click(screen.getByRole('button', { name: 'Preview start sound' }));
+    expect(invoke).toHaveBeenCalledWith('preview_sound', { name: 'Glass', volume: 0.8 });
+  });
+
+  it('preview is disabled while that sound is off', async () => {
+    mockBackend();
+    render(<SettingsPanel />);
+    await screen.findByText('Sounds');
+    expect(screen.getByRole('button', { name: 'Preview stop sound' })).toBeDisabled();
+  });
+
+  it('clearing history asks twice', async () => {
+    mockBackend();
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await screen.findByText('Sounds');
+    await user.click(screen.getByRole('button', { name: 'Clear history…' }));
+    expect(invoke).not.toHaveBeenCalledWith('clear_history');
+    await user.click(screen.getByRole('button', { name: 'Delete all' }));
+    expect(invoke).toHaveBeenCalledWith('clear_history');
+    expect(await screen.findByText('History cleared')).toBeInTheDocument();
+  });
+});
