@@ -60,7 +60,7 @@ const BASE_HEIGHT: f64 = 230.0;
 /// Extra window height per additional transcript line (17px type, 1.375 leading).
 const LINE_HEIGHT: f64 = 24.0;
 /// The read-aloud pill, logical points. The window is exactly this size.
-pub const READING_SIZE: (f64, f64) = (300.0, 60.0);
+pub const READING_SIZE: (f64, f64) = (320.0, 64.0);
 /// Gap between the overlay and the screen edge, logical px.
 const MARGIN: f64 = 16.0;
 
@@ -555,7 +555,7 @@ mod tests {
     #[test]
     fn saved_spot_on_screen_is_restored() {
         let monitors = [mon(0, 25, 1440, 875, 1.0)];
-        assert_eq!(restore_saved((300, 400), &monitors, READING_SIZE), Some((300, 400, 300, 60)));
+        assert_eq!(restore_saved((300, 400), &monitors, READING_SIZE), Some((300, 400, 320, 64)));
     }
 
     #[test]
@@ -564,7 +564,7 @@ mod tests {
         // Dragged to physical (1000, 900) -> saved as points -> restored.
         let saved = to_saved_point((1000, 900), &monitors).unwrap();
         assert_eq!(saved, (500, 450));
-        assert_eq!(restore_saved(saved, &monitors, READING_SIZE), Some((1000, 900, 600, 120)));
+        assert_eq!(restore_saved(saved, &monitors, READING_SIZE), Some((1000, 900, 640, 128)));
     }
 
     #[test]
@@ -579,14 +579,14 @@ mod tests {
     #[test]
     fn saved_spot_on_a_second_monitor_is_found() {
         let monitors = [mon(0, 25, 1440, 875, 1.0), mon(1440, 0, 1920, 1080, 1.0)];
-        assert_eq!(restore_saved((1600, 100), &monitors, READING_SIZE), Some((1600, 100, 300, 60)));
+        assert_eq!(restore_saved((1600, 100), &monitors, READING_SIZE), Some((1600, 100, 320, 64)));
     }
 
     #[test]
     fn restored_pill_is_pulled_inside_the_work_area() {
         // Top-left is on screen but the pill would hang off the right/bottom edge.
         let monitors = [mon(0, 25, 1440, 875, 1.0)];
-        assert_eq!(restore_saved((1430, 895), &monitors, READING_SIZE), Some((1140, 840, 300, 60)));
+        assert_eq!(restore_saved((1430, 895), &monitors, READING_SIZE), Some((1120, 836, 320, 64)));
     }
 
     #[test]
