@@ -110,10 +110,10 @@ pub fn run() {
                         .join("models")
                         .join("stt")
                         .join(&settings.stt_model);
-                    if model_path.exists() {
-                        match engines::whisper::get_or_load_cached(&model_path.to_string_lossy()) {
-                            Ok(_) => tracing::info!("Whisper model preloaded"),
-                            Err(e) => tracing::warn!("Whisper model preload failed: {}", e),
+                    if engines::stt::is_available(&model_path) {
+                        match engines::stt::preload(&model_path.to_string_lossy()) {
+                            Ok(_) => tracing::info!("Speech model preloaded"),
+                            Err(e) => tracing::warn!("Speech model preload failed: {}", e),
                         }
                     } else {
                         tracing::info!(

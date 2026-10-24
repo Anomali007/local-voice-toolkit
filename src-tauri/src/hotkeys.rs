@@ -509,7 +509,7 @@ pub(crate) fn stop_and_transcribe(app: &AppHandle) {
         };
         let model_path = models_dir.join(&settings.stt_model);
 
-        if !model_path.exists() {
+        if !crate::engines::stt::is_available(&model_path) {
             let error_msg = format!("Model not found: {}. Please download it from the Models tab.", settings.stt_model);
             if let Err(e) = app_handle.emit("stt-error", &error_msg) {
                 tracing::warn!("Failed to emit error to UI: {}", e);
@@ -521,54 +521,41 @@ pub(crate) fn stop_and_transcribe(app: &AppHandle) {
         // Transcribe - use to_string_lossy() to safely handle non-UTF8 paths.
         // The engine is cached across dictations to avoid reloading the model.
         let model_path_str = model_path.to_string_lossy();
-        match crate::engines::whisper::get_or_load_cached(&model_path_str) {
-            Ok(engine) => {
-                let app_for_segments = app_handle.clone();
-                let mut accumulated_text = String::new();
-                let on_segment = move |data: whisper_rs::SegmentCallbackData| {
-                    accumulated_text.push_str(&data.text);
-                    let _ = app_for_segments.emit("stt-partial-result", crate::engines::whisper::strip_non_speech(&accumulated_text));
-                };
-                match engine.transcribe_streaming(&audio_data, on_segment) {
-                    Ok(text) => {
-                        // Length only: transcripts are private and the log is a plain file.
-                        tracing::info!("Transcription: {} chars", text.chars().count());
-                        if let Err(e) = app_handle.emit("stt-result", &text) {
-                            tracing::warn!("Failed to emit transcription result: {}", e);
-                        }
+        let app_for_segments = app_handle.clone();
+        let on_partial = move |text: String| {
+            let _ = app_for_segments.emit("stt-partial-result", text);
+        };
+        match crate::engines::stt::transcribe_streaming(&model_path_str, &audio_data, on_partial) {
+            Ok(text) => {
+                // Length only: transcripts are private and the log is a plain file.
+                tracing::info!("Transcription: {} chars", text.chars().count());
+                if let Err(e) = app_handle.emit("stt-result", &text) {
+                    tracing::warn!("Failed to emit transcription result: {}", e);
+                }
 
-                        // History (no-op when off). Stores text on disk only; never logged.
-                        let target = state_clone.target_app.lock().ok().and_then(|g| g.clone());
-                        crate::history::record(&app_handle, &settings, &text, audio_data.len(), target.as_ref());
+                // History (no-op when off). Stores text on disk only; never logged.
+                let target = state_clone.target_app.lock().ok().and_then(|g| g.clone());
+                crate::history::record(&app_handle, &settings, &text, audio_data.len(), target.as_ref());
 
-                        // Auto-paste if enabled
-                        if settings.auto_paste && !text.is_empty() {
-                            if let Err(e) = accessibility::paste_text(&text) {
-                                tracing::error!("Failed to auto-paste transcription: {}", e);
-                                // Offer the system Accessibility dialog once
-                                crate::commands::permissions::prompt_accessibility_once();
-                                emit_permission_error(
-                                    &app_handle,
-                                    "accessibility",
-                                    "Auto-paste failed - the text is in your clipboard, press Cmd+V to paste. Grant Blah³ Accessibility (and Automation) permission for auto-paste.",
-                                );
-                            }
-                        }
-
-                        hide_overlay_after_delay(&app_handle);
-                    }
-                    Err(e) => {
-                        tracing::error!("Transcription failed: {}", e);
-                        if let Err(emit_err) = app_handle.emit("stt-error", format!("Transcription failed: {}", e)) {
-                            tracing::warn!("Failed to emit error to UI: {}", emit_err);
-                        }
-                        hide_overlay_after_delay(&app_handle);
+                // Auto-paste if enabled
+                if settings.auto_paste && !text.is_empty() {
+                    if let Err(e) = accessibility::paste_text(&text) {
+                        tracing::error!("Failed to auto-paste transcription: {}", e);
+                        // Offer the system Accessibility dialog once
+                        crate::commands::permissions::prompt_accessibility_once();
+                        emit_permission_error(
+                            &app_handle,
+                            "accessibility",
+                            "Auto-paste failed - the text is in your clipboard, press Cmd+V to paste. Grant Blah³ Accessibility (and Automation) permission for auto-paste.",
+                        );
                     }
                 }
+
+                hide_overlay_after_delay(&app_handle);
             }
             Err(e) => {
-                tracing::error!("Failed to load Whisper model: {}", e);
-                if let Err(emit_err) = app_handle.emit("stt-error", format!("Failed to load speech model: {}", e)) {
+                tracing::error!("Transcription failed: {}", e);
+                if let Err(emit_err) = app_handle.emit("stt-error", format!("Transcription failed: {}", e)) {
                     tracing::warn!("Failed to emit error to UI: {}", emit_err);
                 }
                 hide_overlay_after_delay(&app_handle);
@@ -670,7 +657,9 @@ static LIVE_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// 30 s windows; the final transcription after stop uses the whole recording.
 const LIVE_WINDOW_SECS: usize = 25;
 
-/// Model used for the live preview when a larger one is selected.
+/// Model used for the live preview when a larger one (or Parakeet, whose
+/// cost grows with the whole window and measured 0.6-1.1 s for 25 s of audio
+/// against Base's 0.4-0.5 s) is selected.
 const LIVE_PREVIEW_MODEL: &str = "ggml-base.en.bin";
 
 /// While recording, re-transcribe the audio so far every ~0.7 s and send it
@@ -688,18 +677,15 @@ fn spawn_live_transcript(app: AppHandle, state: Arc<HotkeyState>, stt_model: Str
             if larger && fast.exists() {
                 Some(fast)
             } else {
-                Some(selected).filter(|p| p.exists())
+                Some(selected).filter(|p| crate::engines::stt::is_available(p))
             }
         }) else {
             return;
         };
         let path = model_path.to_string_lossy().to_string();
-        let engine = match tokio::task::spawn_blocking(move || {
-            crate::engines::whisper::get_or_load_cached(&path)
-        })
-        .await
-        {
-            Ok(Ok(engine)) => engine,
+        let preview_path = path.clone();
+        match tokio::task::spawn_blocking(move || crate::engines::stt::preload(&preview_path)).await {
+            Ok(Ok(())) => {}
             _ => return, // The final transcription reports model errors.
         };
 
@@ -730,8 +716,8 @@ fn spawn_live_transcript(app: AppHandle, state: Arc<HotkeyState>, stt_model: Str
             let window = LIVE_WINDOW_SECS * 16_000;
             let truncated = audio.len() > window;
             let tail = if truncated { audio[audio.len() - window..].to_vec() } else { audio };
-            let engine = Arc::clone(&engine);
-            let text = match tokio::task::spawn_blocking(move || engine.transcribe(&tail)).await {
+            let path = path.clone();
+            let text = match tokio::task::spawn_blocking(move || crate::engines::stt::transcribe(&path, &tail)).await {
                 Ok(Ok(text)) => text,
                 _ => continue,
             };

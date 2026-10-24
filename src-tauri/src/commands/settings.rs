@@ -237,7 +237,7 @@ fn validate_model_choices(settings: &AppSettings, previous: Option<&AppSettings>
     let is_stt_model = registry.get_all_models().iter().any(|m| {
         m.model_type == crate::commands::models::ModelType::Stt
             && m.id == settings.stt_model
-            && m.id.ends_with(".bin")
+            && (m.id.ends_with(".bin") || m.id == crate::engines::parakeet::MODEL_ID)
     });
     if changed(|s| &s.stt_model) && !is_stt_model {
         return Err(format!("Unknown speech model: {}", settings.stt_model));
@@ -255,13 +255,13 @@ fn preload_stt_model(model: &str) {
         .join("models")
         .join("stt")
         .join(model);
-    if !path.exists() {
+    if !crate::engines::stt::is_available(&path) {
         return;
     }
     std::thread::spawn(move || {
-        match crate::engines::whisper::get_or_load_cached(&path.to_string_lossy()) {
-            Ok(_) => tracing::info!("Whisper model switched and loaded"),
-            Err(e) => tracing::warn!("Whisper model preload failed: {}", e),
+        match crate::engines::stt::preload(&path.to_string_lossy()) {
+            Ok(_) => tracing::info!("Speech model switched and loaded"),
+            Err(e) => tracing::warn!("Speech model preload failed: {}", e),
         }
     });
 }
@@ -349,6 +349,10 @@ mod tests {
         assert!(validate_model_choices(&encoder, Some(&base)).is_err());
         let small = AppSettings { stt_model: "ggml-small.en.bin".into(), ..base.clone() };
         assert!(validate_model_choices(&small, Some(&base)).is_ok());
+        let parakeet = AppSettings { stt_model: "parakeet-tdt-0.6b-v2".into(), ..base.clone() };
+        assert!(validate_model_choices(&parakeet, Some(&base)).is_ok());
+        let parakeet_file = AppSettings { stt_model: "parakeet-tdt-0.6b-v2/encoder-model.int8.onnx".into(), ..base.clone() };
+        assert!(validate_model_choices(&parakeet_file, Some(&base)).is_err());
 
         let engine = AppSettings { tts_engine: "../x".into(), ..base.clone() };
         assert!(validate_model_choices(&engine, Some(&base)).is_err());

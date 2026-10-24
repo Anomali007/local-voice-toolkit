@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 pub mod whisper;
+pub mod parakeet;
+pub mod stt;
 pub mod kokoro;
 pub mod phonon;
 pub mod postprocess;

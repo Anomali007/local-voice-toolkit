@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{Emitter, Manager};
 
-use crate::engines::phonon;
+use crate::engines::{parakeet, phonon};
 use crate::models::{
     download::{extract_zip, DownloadProgress, ModelDownloader},
     registry::ModelRegistry,
@@ -38,6 +38,9 @@ pub enum ModelStatus {
     Downloaded,
     Downloading,
 }
+
+/// (name, size, sha256) per file, and how to build each file's URL.
+type MultiFile = (&'static [(&'static str, u64, &'static str)], fn(&str) -> String);
 
 #[tauri::command]
 pub fn list_models() -> Vec<ModelInfo> {
@@ -92,20 +95,27 @@ pub async fn download_model(
     // Every download is checked against a known SHA-256 before it is used.
     let expected = (!model.sha256.is_empty()).then_some(model.sha256.as_str());
 
-    if model_id == phonon::MODEL_ID {
+    // Multi-file models: (files, url builder) per model id.
+    let multi: Option<MultiFile> = match model_id.as_str() {
+        phonon::MODEL_ID => Some((&phonon::FILES, phonon::file_url)),
+        parakeet::MODEL_ID => Some((&parakeet::FILES, parakeet::file_url)),
+        _ => None,
+    };
+
+    if let Some((files, file_url)) = multi {
         // Several files into one directory. Files already complete are
         // skipped, so a retry resumes where the last attempt failed.
         std::fs::create_dir_all(&dest_path).map_err(|e| e.to_string())?;
-        let total = phonon::total_size();
+        let total: u64 = files.iter().map(|(_, size, _)| size).sum();
         let mut done = 0u64;
-        for (name, size, sha256) in phonon::FILES {
+        for &(name, size, sha256) in files {
             let file_path = dest_path.join(name);
             let complete = std::fs::metadata(&file_path).map(|m| m.len() == size).unwrap_or(false);
             if !complete {
                 let window = window.clone();
                 let id = model_id_for_progress.clone();
                 downloader
-                    .download(&phonon::file_url(name), &file_path, Some(sha256), move |p| {
+                    .download(&file_url(name), &file_path, Some(sha256), move |p| {
                         let downloaded = done + p.downloaded;
                         let progress = DownloadProgress {
                             downloaded,
@@ -119,11 +129,11 @@ pub async fn download_model(
             }
             done += size;
         }
-        let missing = phonon::missing_files(&dest_path);
+        let missing = multi_file_missing(&model_id, &dest_path);
         if !missing.is_empty() {
-            return Err(format!("Phonon download incomplete: {}", missing.join(", ")));
+            return Err(format!("{} download incomplete: {}", model.name, missing.join(", ")));
         }
-        tracing::info!("Phonon model downloaded");
+        tracing::info!("{} downloaded", model.name);
     } else if is_coreml {
         // Download to a temp zip file
         let zip_path = type_dir.join(format!("{}.zip", model_id));
@@ -210,12 +220,21 @@ pub fn get_model_status(model_id: String) -> Result<ModelStatus, String> {
     Ok(status_on_disk(&model, &model_path))
 }
 
+/// Files of a multi-file model that are missing or the wrong size.
+fn multi_file_missing(model_id: &str, dir: &std::path::Path) -> Vec<&'static str> {
+    match model_id {
+        phonon::MODEL_ID => phonon::missing_files(dir),
+        parakeet::MODEL_ID => parakeet::missing_files(dir),
+        _ => Vec::new(),
+    }
+}
+
 /// A model counts as downloaded only when its files are really there: a
 /// failed download used to leave a 15-byte error page that showed as
 /// "Downloaded". Single files must be at least half the expected size.
 fn status_on_disk(model: &ModelInfo, path: &std::path::Path) -> ModelStatus {
-    let complete = if model.id == phonon::MODEL_ID {
-        phonon::missing_files(path).is_empty()
+    let complete = if model.id == phonon::MODEL_ID || model.id == parakeet::MODEL_ID {
+        multi_file_missing(&model.id, path).is_empty()
     } else if path.is_dir() {
         true
     } else {
@@ -276,6 +295,25 @@ mod tests {
         for (name, size, _) in phonon::FILES {
             std::fs::File::create(path.join(name)).unwrap().set_len(size).unwrap();
         }
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Downloaded);
+    }
+
+    #[test]
+    fn parakeet_needs_every_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(parakeet::MODEL_ID);
+        std::fs::create_dir_all(&path).unwrap();
+        let mut m = model(parakeet::MODEL_ID, parakeet::total_size());
+        m.model_type = ModelType::Stt;
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
+        let mut files = parakeet::FILES.iter();
+        for (name, size, _) in files.by_ref().take(parakeet::FILES.len() - 1) {
+            std::fs::File::create(path.join(name)).unwrap().set_len(*size).unwrap();
+        }
+        // One file short is still not downloaded.
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
+        let (name, size, _) = files.next().unwrap();
+        std::fs::File::create(path.join(name)).unwrap().set_len(*size).unwrap();
         assert_eq!(status_on_disk(&m, &path), ModelStatus::Downloaded);
     }
 
