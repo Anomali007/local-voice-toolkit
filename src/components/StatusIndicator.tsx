@@ -129,8 +129,8 @@ export default function StatusIndicator() {
       {/* Result toast notification */}
       {resultMessage && status === "idle" && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in">
-          <div className="flex items-center gap-2 px-4 py-3 rounded-full shadow-lg bg-green-500 text-white text-sm font-medium max-w-md">
-            <SuccessIcon className="w-5 h-5 flex-shrink-0" />
+          <div className="flex items-center gap-2 px-4 py-3 rounded-full bg-[rgba(24,24,28,0.88)] backdrop-blur-xl text-white shadow-pop text-[13px] font-medium max-w-md">
+            <SuccessIcon className="w-4 h-4 flex-shrink-0 text-[#46c878]" />
             <span className="truncate">{resultMessage}</span>
           </div>
         </div>
@@ -139,8 +139,8 @@ export default function StatusIndicator() {
       {/* Error toast notification */}
       {errorMessage && !permissionError && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in">
-          <div className="flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg bg-red-500 text-white text-sm font-medium max-w-md">
-            <ErrorIcon className="w-5 h-5 flex-shrink-0" />
+          <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-[rgba(24,24,28,0.88)] backdrop-blur-xl text-white shadow-pop text-[13px] font-medium max-w-md">
+            <ErrorIcon className="w-4 h-4 flex-shrink-0 text-[#ff8a80]" />
             <span>{errorMessage}</span>
           </div>
         </div>
@@ -149,12 +149,12 @@ export default function StatusIndicator() {
       {/* Permission error toast with actionable button */}
       {permissionError && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in">
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg bg-red-500 text-white text-sm font-medium max-w-md">
-            <ErrorIcon className="w-5 h-5 flex-shrink-0" />
+          <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-[rgba(24,24,28,0.88)] backdrop-blur-xl text-white shadow-pop text-[13px] font-medium max-w-md">
+            <ErrorIcon className="w-4 h-4 flex-shrink-0 text-[#ff8a80]" />
             <span>{permissionError.message}</span>
             <button
               onClick={() => openPermissionSettings(permissionError.kind)}
-              className="flex-shrink-0 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-xs font-semibold transition-colors"
+              className="flex-shrink-0 px-3 py-1.5 bg-white/15 hover:bg-white/25 rounded-lg text-xs font-medium transition-colors"
             >
               Open Settings
             </button>
