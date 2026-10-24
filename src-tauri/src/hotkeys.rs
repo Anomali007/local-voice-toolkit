@@ -482,11 +482,12 @@ pub(crate) fn stop_and_transcribe(app: &AppHandle) {
                 let mut accumulated_text = String::new();
                 let on_segment = move |data: whisper_rs::SegmentCallbackData| {
                     accumulated_text.push_str(&data.text);
-                    let _ = app_for_segments.emit("stt-partial-result", accumulated_text.trim());
+                    let _ = app_for_segments.emit("stt-partial-result", crate::engines::whisper::strip_non_speech(&accumulated_text));
                 };
                 match engine.transcribe_streaming(&audio_data, on_segment) {
                     Ok(text) => {
-                        tracing::info!("Transcription: {}", text);
+                        // Length only: transcripts are private and the log is a plain file.
+                        tracing::info!("Transcription: {} chars", text.chars().count());
                         if let Err(e) = app_handle.emit("stt-result", &text) {
                             tracing::warn!("Failed to emit transcription result: {}", e);
                         }
@@ -600,31 +601,27 @@ static LIVE_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// 30 s windows; the final transcription after stop uses the whole recording.
 const LIVE_WINDOW_SECS: usize = 25;
 
-/// Whisper's markers for non-speech ("[BLANK_AUDIO]", "(music)") are noise
-/// in a live preview.
-fn strip_non_speech(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut depth = 0i32;
-    for c in text.chars() {
-        match c {
-            '[' | '(' => depth += 1,
-            ']' | ')' if depth > 0 => depth -= 1,
-            _ if depth == 0 => out.push(c),
-            _ => {}
-        }
-    }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
-}
+/// Model used for the live preview when a larger one is selected.
+const LIVE_PREVIEW_MODEL: &str = "ggml-base.en.bin";
 
 /// While recording, re-transcribe the audio so far every ~0.7 s and send it
 /// to the overlay as `stt-partial-result`, so words appear while speaking.
 fn spawn_live_transcript(app: AppHandle, state: Arc<HotkeyState>, stt_model: String) {
     let session = LIVE_SESSION.fetch_add(1, Ordering::SeqCst) + 1;
     tauri::async_runtime::spawn(async move {
-        let Some(model_path) = dirs::data_dir()
-            .map(|d| d.join("com.blahcubed.app").join("models").join("stt").join(&stt_model))
-            .filter(|p| p.exists())
-        else {
+        // The preview re-runs every 0.7 s, so prefer Base when a larger model
+        // is selected; the final transcription still uses the selected model.
+        let stt_dir = dirs::data_dir().map(|d| d.join("com.blahcubed.app").join("models").join("stt"));
+        let Some(model_path) = stt_dir.and_then(|dir| {
+            let fast = dir.join(LIVE_PREVIEW_MODEL);
+            let selected = dir.join(&stt_model);
+            let larger = !matches!(stt_model.as_str(), "ggml-tiny.en.bin" | "ggml-base.en.bin");
+            if larger && fast.exists() {
+                Some(fast)
+            } else {
+                Some(selected).filter(|p| p.exists())
+            }
+        }) else {
             return;
         };
         let path = model_path.to_string_lossy().to_string();
@@ -663,7 +660,7 @@ fn spawn_live_transcript(app: AppHandle, state: Arc<HotkeyState>, stt_model: Str
             let tail = if truncated { audio[audio.len() - window..].to_vec() } else { audio };
             let engine = Arc::clone(&engine);
             let text = match tokio::task::spawn_blocking(move || engine.transcribe(&tail)).await {
-                Ok(Ok(text)) => strip_non_speech(&text),
+                Ok(Ok(text)) => text,
                 _ => continue,
             };
             if text.is_empty() || !current(&state) {
@@ -860,9 +857,9 @@ mod tests {
 
     #[test]
     fn live_preview_drops_non_speech_markers() {
-        assert_eq!(super::strip_non_speech("[BLANK_AUDIO]"), "");
-        assert_eq!(super::strip_non_speech(" Hello (music) world [inaudible] "), "Hello world");
-        assert_eq!(super::strip_non_speech("It's 10:30, okay?"), "It's 10:30, okay?");
+        assert_eq!(crate::engines::whisper::strip_non_speech("[BLANK_AUDIO]"), "");
+        assert_eq!(crate::engines::whisper::strip_non_speech(" Hello (music) world [inaudible] "), "Hello world");
+        assert_eq!(crate::engines::whisper::strip_non_speech("It's 10:30, okay?"), "It's 10:30, okay?");
     }
 
     use super::*;

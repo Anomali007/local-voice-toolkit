@@ -99,6 +99,7 @@ pub fn update_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(
     if settings.stt_hotkey.trim().eq_ignore_ascii_case(settings.tts_hotkey.trim()) {
         return Err("Dictation and Read aloud hotkeys must be different".to_string());
     }
+    validate_model_choices(&settings, get_settings().ok().as_ref())?;
 
     let previous = get_settings().ok();
     let settings_path = get_settings_path();
@@ -145,6 +146,31 @@ pub fn update_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(
     // Keep the menu bar menu's checkmarks and hotkey labels current.
     crate::tray::refresh(&app);
 
+    Ok(())
+}
+
+/// Settings feed file paths (models/stt/<stt_model>), so only accept values
+/// the app itself offers; a crafted value like "../../x" must not reach a
+/// model loader.
+/// Only changed values are checked, so an older saved value never locks the
+/// user out of saving other settings.
+fn validate_model_choices(settings: &AppSettings, previous: Option<&AppSettings>) -> Result<(), String> {
+    let changed = |f: fn(&AppSettings) -> &String| previous.is_none_or(|p| f(p) != f(settings));
+    if !changed(|s| &s.stt_model) && !changed(|s| &s.tts_engine) {
+        return Ok(());
+    }
+    let registry = crate::models::registry::ModelRegistry::new();
+    let is_stt_model = registry.get_all_models().iter().any(|m| {
+        m.model_type == crate::commands::models::ModelType::Stt
+            && m.id == settings.stt_model
+            && m.id.ends_with(".bin")
+    });
+    if changed(|s| &s.stt_model) && !is_stt_model {
+        return Err(format!("Unknown speech model: {}", settings.stt_model));
+    }
+    if changed(|s| &s.tts_engine) && !matches!(settings.tts_engine.as_str(), "kokoro" | "phonon") {
+        return Err(format!("Unknown voice engine: {}", settings.tts_engine));
+    }
     Ok(())
 }
 
@@ -215,5 +241,26 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"a\":2}");
         assert!(!path.with_extension("json.tmp").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn model_choices_are_validated_when_changed() {
+        let base = AppSettings::default();
+        assert!(validate_model_choices(&base, None).is_ok());
+
+        let traversal = AppSettings { stt_model: "../../../../tmp/evil.bin".into(), ..base.clone() };
+        assert!(validate_model_choices(&traversal, Some(&base)).is_err());
+        let encoder = AppSettings { stt_model: "ggml-base.en-encoder.mlmodelc".into(), ..base.clone() };
+        assert!(validate_model_choices(&encoder, Some(&base)).is_err());
+        let small = AppSettings { stt_model: "ggml-small.en.bin".into(), ..base.clone() };
+        assert!(validate_model_choices(&small, Some(&base)).is_ok());
+
+        let engine = AppSettings { tts_engine: "../x".into(), ..base.clone() };
+        assert!(validate_model_choices(&engine, Some(&base)).is_err());
+
+        // An unchanged (older) value doesn't block saving other settings.
+        let stale = AppSettings { stt_model: "ggml-removed.bin".into(), ..base.clone() };
+        let stale_speed = AppSettings { tts_speed: 1.5, ..stale.clone() };
+        assert!(validate_model_choices(&stale_speed, Some(&stale)).is_ok());
     }
 }

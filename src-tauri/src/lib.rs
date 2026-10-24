@@ -28,7 +28,11 @@ pub fn run() {
             if std::fs::metadata(&path).is_ok_and(|m| m.len() > 5_000_000) {
                 let _ = std::fs::rename(&path, dir.join("blah3.old.log"));
             }
-            std::fs::OpenOptions::new().create(true).append(true).open(path).ok()
+            // Owner-only: logs can name apps and files the user worked in.
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let file = std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(&path).ok()?;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            Some(file)
         });
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(

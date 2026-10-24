@@ -45,11 +45,8 @@ pub struct AudioCapture {
     silence_config: SilenceConfig,
 }
 
-// Implement Send + Sync for AudioCapture
-// This is safe because we don't store the cpal::Stream directly,
-// instead it runs in a dedicated thread controlled by AtomicBool
-unsafe impl Send for AudioCapture {}
-unsafe impl Sync for AudioCapture {}
+// AudioCapture is Send + Sync on its own (Arcs, atomics, plain values);
+// the non-Send cpal::Stream lives on the capture thread.
 
 impl AudioCapture {
     /// Create a new audio capture with default settings.

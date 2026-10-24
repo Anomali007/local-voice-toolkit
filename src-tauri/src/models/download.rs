@@ -180,14 +180,8 @@ pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
             std::io::copy(&mut file, &mut outfile)?;
         }
 
-        // Set permissions on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Some(mode) = file.unix_mode() {
-                std::fs::set_permissions(&outpath, std::fs::Permissions::from_mode(mode))?;
-            }
-        }
+        // Archive-supplied modes are not applied: a hostile zip could set
+        // setuid or world-writable bits. Files keep the default 0644/0755.
     }
 
     tracing::info!("Extraction complete: {:?}", dest_dir);

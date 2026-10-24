@@ -33,6 +33,22 @@ pub fn get_or_load_cached(model_path: &str) -> Result<Arc<WhisperEngine>> {
     Ok(engine)
 }
 
+/// Whisper writes non-speech as bracketed tags ("[BLANK_AUDIO]", "(music)");
+/// they must never reach a paste.
+pub fn strip_non_speech(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut depth = 0i32;
+    for c in text.chars() {
+        match c {
+            '[' | '(' => depth += 1,
+            ']' | ')' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub struct WhisperEngine {
     ctx: WhisperContext,
     model_path: String,
@@ -89,7 +105,7 @@ impl WhisperEngine {
             text.push_str(&segment);
         }
 
-        Ok(crate::dictionary::apply(text.trim(), &dictionary))
+        Ok(crate::dictionary::apply(&strip_non_speech(&text), &dictionary))
     }
 
     /// Transcribe audio with a callback fired as each segment is decoded.
@@ -134,7 +150,7 @@ impl WhisperEngine {
             text.push_str(&segment);
         }
 
-        Ok(crate::dictionary::apply(text.trim(), &dictionary))
+        Ok(crate::dictionary::apply(&strip_non_speech(&text), &dictionary))
     }
 }
 
