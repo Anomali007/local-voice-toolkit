@@ -508,9 +508,17 @@ fn unregister_cancel_shortcut(app: &AppHandle) {
     }
 }
 
-/// Handle TTS (read aloud) shortcut - single press to read selection
+/// Handle TTS (read aloud) shortcut: press to read the selection, press
+/// again while it is reading to stop.
 fn handle_tts_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutState) {
     if event != ShortcutState::Pressed {
+        return;
+    }
+
+    if crate::commands::tts::is_speaking() {
+        tracing::info!("TTS hotkey pressed while reading - stopping");
+        // The reading task sees the stop and emits tts-finished itself.
+        tauri::async_runtime::spawn(crate::commands::tts::stop_speaking());
         return;
     }
 
@@ -518,7 +526,7 @@ fn handle_tts_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutSta
 
     // Get selected text
     let text = match accessibility::get_selected_text() {
-        Some(t) if !t.is_empty() => t,
+        Some(t) if !t.trim().is_empty() => t,
         _ => {
             tracing::warn!("No text selected for TTS");
             if let Err(e) = app.emit("tts-error", "No text selected. Please select some text first.") {
@@ -544,23 +552,14 @@ fn handle_tts_shortcut(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutSta
             }
         };
 
-        let model_path = dirs::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("com.blahcubed.app")
-            .join("models")
-            .join("tts")
-            .join("kokoro-v1.0.onnx")
-            .to_string_lossy()
-            .to_string();
-
         match crate::commands::tts::speak_text(
-            text.clone(),
+            text,
             settings.tts_voice.clone(),
             settings.tts_speed,
-            model_path,
+            Some(settings.tts_engine.clone()),
         ).await {
             Ok(()) => {
-                tracing::info!("TTS playback completed");
+                tracing::info!("TTS playback finished");
                 if let Err(e) = app_handle.emit("tts-finished", ()) {
                     tracing::warn!("Failed to emit tts-finished event: {}", e);
                 }

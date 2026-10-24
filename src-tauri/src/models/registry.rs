@@ -113,21 +113,32 @@ impl ModelRegistry {
                     id: "kokoro-v1.0.onnx".into(),
                     name: "Kokoro 82M".into(),
                     model_type: ModelType::Tts,
-                    size_bytes: 330_000_000,
-                    size_display: "330 MB".into(),
-                    download_url: "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/kokoro-v1.0.onnx".into(),
+                    size_bytes: 325_532_387,
+                    size_display: "326 MB".into(),
+                    download_url: "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx".into(),
                     status: ModelStatus::Available,
-                    description: format!("🗣️ 54 voices in 10 languages. {} on {}. Required for TTS.", tts_speed, chip),
+                    description: format!("🗣️ 27 English voices (US and UK). {} on {}. Required for TTS.", tts_speed, chip),
                 },
                 ModelInfo {
                     id: "voices-v1.0.bin".into(),
                     name: "Kokoro Voice Styles".into(),
                     model_type: ModelType::Tts,
-                    size_bytes: 5_000_000,
-                    size_display: "5 MB".into(),
-                    download_url: "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices-v1.0.bin".into(),
+                    size_bytes: 28_214_398,
+                    size_display: "28 MB".into(),
+                    download_url: "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin".into(),
                     status: ModelStatus::Available,
-                    description: "Voice style vectors for all 54 Kokoro voices. Required for TTS.".into(),
+                    description: "Voice style vectors for the Kokoro voices. Required for TTS.".into(),
+                },
+                ModelInfo {
+                    id: crate::engines::phonon::MODEL_ID.into(),
+                    name: "Phonon 31m".into(),
+                    model_type: ModelType::Tts,
+                    size_bytes: crate::engines::phonon::total_size(),
+                    size_display: "99 MB".into(),
+                    // Four files; see engines::phonon::FILES.
+                    download_url: crate::engines::phonon::file_url("model.safetensors"),
+                    status: ModelStatus::Available,
+                    description: "🎙️ Gradium's 31M-parameter English voice. Smaller and about 2x faster than Kokoro, with clearer numbers and names. One voice. Apache-2.0.".into(),
                 },
             ],
         }
@@ -283,8 +294,8 @@ mod tests {
         let registry = ModelRegistry::new();
         let tts = registry.get_tts_models();
 
-        // kokoro model + voices = 2
-        assert_eq!(tts.len(), 2);
+        // kokoro model + voices + phonon = 3
+        assert_eq!(tts.len(), 3);
     }
 
     #[test]
@@ -299,8 +310,9 @@ mod tests {
                 model.id
             );
             assert!(
-                model.download_url.contains("huggingface.co"),
-                "Model {} should be hosted on HuggingFace",
+                model.download_url.starts_with("https://huggingface.co/")
+                    || model.download_url.starts_with("https://github.com/"),
+                "Model {} should be hosted on Hugging Face or GitHub releases",
                 model.id
             );
         }

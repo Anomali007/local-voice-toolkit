@@ -10,6 +10,9 @@ pub struct AppSettings {
     pub stt_model: String,
     pub tts_voice: String,
     pub tts_speed: f32,
+    /// "kokoro" or "phonon"
+    #[serde(default = "default_tts_engine")]
+    pub tts_engine: String,
     pub auto_paste: bool,
     pub launch_at_login: bool,
     pub menu_bar_mode: bool,
@@ -23,6 +26,10 @@ pub struct AppSettings {
     // Onboarding
     #[serde(default)]
     pub onboarding_completed: bool,
+}
+
+fn default_tts_engine() -> String {
+    "kokoro".to_string()
 }
 
 fn default_silence_enabled() -> bool {
@@ -45,6 +52,7 @@ impl Default for AppSettings {
             stt_model: "ggml-base.en.bin".to_string(),
             tts_voice: "af_heart".to_string(),
             tts_speed: 1.0,
+            tts_engine: default_tts_engine(),
             auto_paste: true,
             launch_at_login: false,
             menu_bar_mode: true,

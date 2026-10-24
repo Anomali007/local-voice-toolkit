@@ -26,34 +26,52 @@ impl ModelDownloader {
     {
         tracing::info!("Downloading from: {}", url);
 
-        let response = self.client.get(url).send().await?;
+        // A non-2xx response (e.g. a moved file's 404 page) must never be
+        // saved as the model.
+        let response = self.client.get(url).send().await?.error_for_status()?;
         let total_size = response.content_length().unwrap_or(0);
 
         tracing::info!("Download size: {} bytes", total_size);
 
-        let mut file = tokio::fs::File::create(dest).await?;
+        // Write to a .part file and rename only once complete, so an
+        // interrupted download never looks like a finished model.
+        let part = part_path(dest);
+        let mut file = tokio::fs::File::create(&part).await?;
         let mut downloaded: u64 = 0;
         let mut stream = response.bytes_stream();
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await?;
+        let streamed: Result<()> = async {
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await?;
 
-            downloaded += chunk.len() as u64;
+                downloaded += chunk.len() as u64;
 
-            let progress = DownloadProgress {
-                downloaded,
-                total: total_size,
-                percentage: if total_size > 0 {
-                    (downloaded as f64 / total_size as f64 * 100.0) as u8
-                } else {
-                    0
-                },
-            };
+                let progress = DownloadProgress {
+                    downloaded,
+                    total: total_size,
+                    percentage: if total_size > 0 {
+                        (downloaded as f64 / total_size as f64 * 100.0) as u8
+                    } else {
+                        0
+                    },
+                };
 
-            progress_callback(progress);
+                progress_callback(progress);
+            }
+            tokio::io::AsyncWriteExt::flush(&mut file).await?;
+            Ok(())
+        }
+        .await;
+        drop(file);
+
+        let result = streamed.and_then(|()| check_complete(downloaded, total_size));
+        if let Err(e) = result {
+            let _ = tokio::fs::remove_file(&part).await;
+            return Err(e);
         }
 
+        tokio::fs::rename(&part, dest).await?;
         tracing::info!("Download complete: {:?}", dest);
         Ok(())
     }
@@ -100,6 +118,22 @@ pub struct DownloadProgress {
     pub downloaded: u64,
     pub total: u64,
     pub percentage: u8,
+}
+
+/// Temporary path a download is written to before it is complete.
+pub fn part_path(dest: &Path) -> std::path::PathBuf {
+    let mut name = dest.file_name().unwrap_or_default().to_os_string();
+    name.push(".part");
+    dest.with_file_name(name)
+}
+
+/// A download is complete when it received the advertised length (or, when
+/// no length was sent, at least something).
+fn check_complete(downloaded: u64, expected: u64) -> Result<()> {
+    if (expected > 0 && downloaded != expected) || downloaded == 0 {
+        anyhow::bail!("Download incomplete: received {} of {} bytes", downloaded, expected);
+    }
+    Ok(())
 }
 
 /// Extract a zip file to a directory
@@ -246,6 +280,70 @@ mod tests {
             &temp_dir.path().join("dest"),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_part_path() {
+        let p = part_path(Path::new("/tmp/models/kokoro-v1.0.onnx"));
+        assert_eq!(p, Path::new("/tmp/models/kokoro-v1.0.onnx.part"));
+    }
+
+    #[test]
+    fn test_check_complete() {
+        assert!(check_complete(100, 100).is_ok());
+        assert!(check_complete(42, 0).is_ok());
+        assert!(check_complete(99, 100).is_err(), "truncated");
+        assert!(check_complete(0, 0).is_err(), "empty body");
+    }
+
+    /// Serve one canned HTTP response on a local port.
+    async fn serve_once(status: &str, body: &'static [u8], content_length: Option<usize>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let status = status.to_string();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            let len = content_length.unwrap_or(body.len());
+            let head = format!("HTTP/1.1 {status}\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n");
+            let _ = sock.write_all(head.as_bytes()).await;
+            let _ = sock.write_all(body).await;
+        });
+        format!("http://{addr}/model.bin")
+    }
+
+    #[tokio::test]
+    async fn test_download_404_leaves_no_file() {
+        let url = serve_once("404 Not Found", b"Entry not found", None).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+        let result = ModelDownloader::new().download(&url, &dest, |_| {}).await;
+        assert!(result.is_err());
+        assert!(!dest.exists(), "error page must not be saved as the model");
+        assert!(!part_path(&dest).exists());
+    }
+
+    #[tokio::test]
+    async fn test_download_truncated_leaves_no_file() {
+        let url = serve_once("200 OK", b"only part", Some(1000)).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+        let result = ModelDownloader::new().download(&url, &dest, |_| {}).await;
+        assert!(result.is_err());
+        assert!(!dest.exists());
+        assert!(!part_path(&dest).exists());
+    }
+
+    #[tokio::test]
+    async fn test_download_success() {
+        let url = serve_once("200 OK", b"model bytes", None).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+        ModelDownloader::new().download(&url, &dest, |_| {}).await.unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"model bytes");
+        assert!(!part_path(&dest).exists());
     }
 
     #[test]

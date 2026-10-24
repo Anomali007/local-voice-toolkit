@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::Emitter;
 
+use crate::engines::phonon;
 use crate::models::{
-    download::{extract_zip, ModelDownloader},
+    download::{extract_zip, DownloadProgress, ModelDownloader},
     registry::ModelRegistry,
 };
 
@@ -50,12 +51,7 @@ pub fn list_models() -> Vec<ModelInfo> {
                 })
                 .join(&model.id);
 
-            model.status = if model_path.exists() {
-                ModelStatus::Downloaded
-            } else {
-                ModelStatus::Available
-            };
-
+            model.status = status_on_disk(&model, &model_path);
             model
         })
         .collect()
@@ -88,7 +84,39 @@ pub async fn download_model(
     // Check if this is a CoreML model (zip file that needs extraction)
     let is_coreml = model_id.ends_with(".mlmodelc") && model.download_url.ends_with(".zip");
 
-    if is_coreml {
+    if model_id == phonon::MODEL_ID {
+        // Several files into one directory. Files already complete are
+        // skipped, so a retry resumes where the last attempt failed.
+        std::fs::create_dir_all(&dest_path).map_err(|e| e.to_string())?;
+        let total = phonon::total_size();
+        let mut done = 0u64;
+        for (name, size) in phonon::FILES {
+            let file_path = dest_path.join(name);
+            let complete = std::fs::metadata(&file_path).map(|m| m.len() == size).unwrap_or(false);
+            if !complete {
+                let window = window.clone();
+                let id = model_id_for_progress.clone();
+                downloader
+                    .download(&phonon::file_url(name), &file_path, move |p| {
+                        let downloaded = done + p.downloaded;
+                        let progress = DownloadProgress {
+                            downloaded,
+                            total,
+                            percentage: (downloaded as f64 / total as f64 * 100.0).min(100.0) as u8,
+                        };
+                        let _ = window.emit("model-download-progress", (&id, progress));
+                    })
+                    .await
+                    .map_err(|e| format!("Failed to download {}: {}", name, e))?;
+            }
+            done += size;
+        }
+        let missing = phonon::missing_files(&dest_path);
+        if !missing.is_empty() {
+            return Err(format!("Phonon download incomplete: {}", missing.join(", ")));
+        }
+        tracing::info!("Phonon model downloaded");
+    } else if is_coreml {
         // Download to a temp zip file
         let zip_path = type_dir.join(format!("{}.zip", model_id));
 
@@ -168,11 +196,25 @@ pub fn get_model_status(model_id: String) -> Result<ModelStatus, String> {
         })
         .join(&model_id);
 
-    Ok(if model_path.exists() {
+    Ok(status_on_disk(&model, &model_path))
+}
+
+/// A model counts as downloaded only when its files are really there: a
+/// failed download used to leave a 15-byte error page that showed as
+/// "Downloaded". Single files must be at least half the expected size.
+fn status_on_disk(model: &ModelInfo, path: &std::path::Path) -> ModelStatus {
+    let complete = if model.id == phonon::MODEL_ID {
+        phonon::missing_files(path).is_empty()
+    } else if path.is_dir() {
+        true
+    } else {
+        std::fs::metadata(path).map(|m| m.len() >= model.size_bytes / 2).unwrap_or(false)
+    };
+    if complete {
         ModelStatus::Downloaded
     } else {
         ModelStatus::Available
-    })
+    }
 }
 
 fn get_models_dir() -> PathBuf {
@@ -180,4 +222,59 @@ fn get_models_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("com.blahcubed.app")
         .join("models")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(id: &str, size_bytes: u64) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            name: id.into(),
+            model_type: ModelType::Tts,
+            size_bytes,
+            size_display: String::new(),
+            download_url: String::new(),
+            status: ModelStatus::Available,
+            description: String::new(),
+        }
+    }
+
+    #[test]
+    fn error_page_is_not_downloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kokoro-v1.0.onnx");
+        let m = model("kokoro-v1.0.onnx", 325_532_387);
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
+        std::fs::write(&path, b"Entry not found").unwrap();
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
+        std::fs::File::create(&path).unwrap().set_len(325_532_387).unwrap();
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Downloaded);
+    }
+
+    #[test]
+    fn phonon_needs_every_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(phonon::MODEL_ID);
+        std::fs::create_dir_all(&path).unwrap();
+        let m = model(phonon::MODEL_ID, phonon::total_size());
+        // An existing directory alone is not enough.
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
+        for (name, size) in phonon::FILES {
+            std::fs::File::create(path.join(name)).unwrap().set_len(size).unwrap();
+        }
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Downloaded);
+    }
+
+    #[test]
+    fn registry_lists_phonon_and_working_kokoro_urls() {
+        let models = ModelRegistry::new().get_all_models();
+        assert!(models.iter().any(|m| m.id == phonon::MODEL_ID && m.model_type == ModelType::Tts));
+        for id in ["kokoro-v1.0.onnx", "voices-v1.0.bin"] {
+            let m = models.iter().find(|m| m.id == id).unwrap();
+            // The old Hugging Face path 404s and was saved as the model.
+            assert!(!m.download_url.contains("onnx-community"), "{}", m.download_url);
+        }
+    }
 }

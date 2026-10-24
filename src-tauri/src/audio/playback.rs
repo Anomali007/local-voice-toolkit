@@ -56,6 +56,71 @@ impl AudioPlayer {
     }
 }
 
+enum StreamMsg {
+    Chunk(Vec<f32>, u32),
+    Finish,
+}
+
+/// Plays audio chunks back to back as they arrive, so speech can start
+/// before the whole text is synthesized. The output stream lives on its own
+/// thread (rodio's `OutputStream` is not `Send`).
+pub struct StreamingPlayer {
+    tx: std::sync::mpsc::Sender<StreamMsg>,
+    should_stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<Result<()>>>,
+}
+
+impl StreamingPlayer {
+    /// Start the playback thread. Setting `should_stop` stops playback at once.
+    pub fn start(should_stop: Arc<AtomicBool>) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<StreamMsg>();
+        let stop = Arc::clone(&should_stop);
+        let handle = thread::spawn(move || -> Result<()> {
+            let (_stream, stream_handle) = OutputStream::try_default()?;
+            let sink = Sink::try_new(&stream_handle)?;
+            let mut finished = false;
+            loop {
+                if stop.load(Ordering::SeqCst) {
+                    sink.stop();
+                    tracing::info!("Playback stopped");
+                    return Ok(());
+                }
+                match rx.recv_timeout(std::time::Duration::from_millis(10)) {
+                    Ok(StreamMsg::Chunk(samples, rate)) => {
+                        sink.append(SamplesBuffer::new(1, rate, samples));
+                    }
+                    Ok(StreamMsg::Finish) => finished = true,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    // The sender is gone without Finish: play what is queued.
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => finished = true,
+                }
+                if finished && sink.empty() {
+                    tracing::info!("Playback completed");
+                    return Ok(());
+                }
+            }
+        });
+        Self { tx, should_stop, handle: Some(handle) }
+    }
+
+    /// Queue a chunk. Returns false once playback has stopped.
+    pub fn push(&self, samples: Vec<f32>, sample_rate: u32) -> bool {
+        !self.should_stop.load(Ordering::SeqCst)
+            && self.tx.send(StreamMsg::Chunk(samples, sample_rate)).is_ok()
+    }
+
+    /// Signal that no more chunks are coming and block until playback ends
+    /// (all audio played, or stopped).
+    pub fn finish_and_wait(mut self) -> Result<()> {
+        let _ = self.tx.send(StreamMsg::Finish);
+        match self.handle.take().map(|h| h.join()) {
+            Some(Ok(result)) => result,
+            Some(Err(_)) => Err(anyhow::anyhow!("audio playback thread panicked")),
+            None => Ok(()),
+        }
+    }
+}
+
 fn play_audio_sync(
     samples: &[f32],
     sample_rate: u32,
