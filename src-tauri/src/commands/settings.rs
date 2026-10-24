@@ -46,8 +46,9 @@ pub struct AppSettings {
     pub remove_fillers: bool,
     /// Keep a local log of finished dictations (History page).
     pub history_enabled: bool,
-    /// Most recent dictations kept (older ones are dropped).
-    pub history_max_entries: u32,
+    /// Most recent dictations kept; 0 keeps every one (the default). Renamed
+    /// from `history_max_entries` so the old 1,000 cap is not carried over.
+    pub history_keep: u32,
     /// Play a system sound when the microphone goes live.
     pub sound_on_start: bool,
     /// Play a system sound when a dictation ends (or is cancelled).
@@ -106,7 +107,7 @@ impl Default for AppSettings {
             reading_overlay_custom: false,
             remove_fillers: true,
             history_enabled: true,
-            history_max_entries: 1000,
+            history_keep: 0,
             sound_on_start: false,
             sound_on_stop: false,
             sound_start_name: "Tink".to_string(),
@@ -309,7 +310,7 @@ mod tests {
     fn dictation_extras_defaults() {
         let s = parse_settings("{}").unwrap();
         assert!(s.remove_fillers && s.history_enabled && s.hold_space_to_pause);
-        assert_eq!(s.history_max_entries, 1000);
+        assert_eq!(s.history_keep, 0);
         assert!(!s.sound_on_start && !s.sound_on_stop);
         assert_eq!((s.sound_start_name.as_str(), s.sound_stop_name.as_str()), ("Tink", "Pop"));
     }

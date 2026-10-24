@@ -77,6 +77,25 @@ export const HistoryIcon = (p: IconProps) => (
     <path d="M3.5 12H6M4.6 9.2L3.5 12l1.6 2.6" strokeWidth={1.4} />
   </Svg>
 );
+/** Stats: three rising bars. */
+export const ChartIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="4" y="12" width="4" height="8" rx="1.2" {...T} />
+    <rect x="10" y="8" width="4" height="12" rx="1.2" {...T} />
+    <rect x="16" y="4" width="4" height="16" rx="1.2" {...T} />
+    <rect x="4" y="12" width="4" height="8" rx="1.2" />
+    <rect x="10" y="8" width="4" height="12" rx="1.2" />
+    <rect x="16" y="4" width="4" height="16" rx="1.2" />
+  </Svg>
+);
+/** Streak: a flame. */
+export const FlameIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.4 2.4-5.4 3.6-7.9.4 1.6 1.2 2.7 2.3 3.3C11.6 6.9 13 4.6 15 3c-.2 2.9 1.2 4.7 2.4 6.4 1 1.5 1.6 3 1.6 4.9 0 4-2.9 6.7-7 6.7z" {...T} />
+    <path d="M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.4 2.4-5.4 3.6-7.9.4 1.6 1.2 2.7 2.3 3.3C11.6 6.9 13 4.6 15 3c-.2 2.9 1.2 4.7 2.4 6.4 1 1.5 1.6 3 1.6 4.9 0 4-2.9 6.7-7 6.7z" />
+    <path d="M12 21c-1.7 0-2.8-1.1-2.8-2.7 0-1.8 1.6-2.7 2.3-4.3.9 1 3.3 2.3 3.3 4.4 0 1.5-1.2 2.6-2.8 2.6z" />
+  </Svg>
+);
 export const KeyboardIcon = (p: IconProps) => (
   <Svg {...p}>
     <rect x="2.8" y="6" width="18.4" height="12" rx="3" {...T} />

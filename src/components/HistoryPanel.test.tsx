@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
-import HistoryPanel, { filterHistory, formatDuration, relativeTime, type HistoryEntry } from './HistoryPanel';
+import HistoryPanel, { formatDuration, relativeTime, type HistoryEntry } from './HistoryPanel';
 
 const NOW = 1_700_000_000_000;
 const entry = (id: string, text: string, ageMs: number, app: string | null = 'Notes'): HistoryEntry => ({
@@ -17,16 +17,30 @@ const entry = (id: string, text: string, ageMs: number, app: string | null = 'No
 
 let store: HistoryEntry[];
 let pasteResult: string;
+let fluidVoice: boolean;
 
 beforeEach(() => {
   store = [entry('b', 'second dictation about Rust', 60_000), entry('a', 'first dictation', 3_600_000, 'Slack')];
   pasteResult = 'pasted';
+  fluidVoice = false;
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockImplementation(async (cmd: string, raw?: unknown) => {
     const args = raw as Record<string, unknown> | undefined;
     switch (cmd) {
-      case 'get_history':
-        return store;
+      case 'get_history': {
+        // Mirrors the backend: case-insensitive match on text or app, paged.
+        const q = String(args?.query ?? '').trim().toLowerCase();
+        const hits = q
+          ? store.filter((e) => e.text.toLowerCase().includes(q) || (e.app_name ?? '').toLowerCase().includes(q))
+          : store;
+        const offset = Number(args?.offset ?? 0);
+        return { entries: hits.slice(offset, offset + Number(args?.limit ?? 100)), total: hits.length };
+      }
+      case 'fluidvoice_history_available':
+        return fluidVoice;
+      case 'import_fluidvoice_history':
+        store = [entry('fv-1', 'imported from fluid', 86_400_000, 'Ghostty'), ...store];
+        return { imported: 1, already_here: 0, skipped: 0 };
       case 'get_settings':
         return { history_enabled: true };
       case 'delete_history_entry':
@@ -58,27 +72,19 @@ describe('relativeTime', () => {
   });
 });
 
-describe('filterHistory', () => {
-  it('matches text and app name, case-insensitively', () => {
-    expect(filterHistory(store, 'RUST').map((e) => e.id)).toEqual(['b']);
-    expect(filterHistory(store, 'slack').map((e) => e.id)).toEqual(['a']);
-    expect(filterHistory(store, '  ').length).toBe(2);
-    expect(filterHistory(store, 'zzz')).toEqual([]);
-  });
-});
-
 describe('HistoryPanel', () => {
   it('lists entries newest first as given and searches', async () => {
     const user = userEvent.setup();
     render(<HistoryPanel />);
     expect(await screen.findByText('second dictation about Rust')).toBeInTheDocument();
     expect(screen.getByText('first dictation')).toBeInTheDocument();
-    await user.type(screen.getByLabelText('Search history'), 'first');
-    expect(screen.queryByText('second dictation about Rust')).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Search history'), 'SLACK');
+    await waitFor(() => expect(screen.queryByText('second dictation about Rust')).not.toBeInTheDocument());
     expect(screen.getByText('first dictation')).toBeInTheDocument();
     await user.clear(screen.getByLabelText('Search history'));
     await user.type(screen.getByLabelText('Search history'), 'nothing like this');
-    expect(screen.getByText(/Nothing matches/)).toBeInTheDocument();
+    expect(await screen.findByText(/Nothing matches/)).toBeInTheDocument();
+    expect(invoke).toHaveBeenCalledWith('get_history', { query: 'nothing like this', limit: 100, offset: 0 });
   });
 
   it('copies, pastes again and reports what happened', async () => {
@@ -120,9 +126,29 @@ describe('HistoryPanel', () => {
 
   it('says when history is off', async () => {
     vi.mocked(invoke).mockImplementation(async (cmd: string) =>
-      cmd === 'get_history' ? [] : cmd === 'get_settings' ? { history_enabled: false } : undefined,
+      cmd === 'get_history' ? { entries: [], total: 0 } : cmd === 'get_settings' ? { history_enabled: false } : undefined,
     );
     render(<HistoryPanel />);
     expect(await screen.findByText(/History is turned off/)).toBeInTheDocument();
+  });
+
+  it('pages through a long history', async () => {
+    store = Array.from({ length: 130 }, (_, i) => entry(`e${i}`, `dictation number ${i}`, i * 60_000));
+    const user = userEvent.setup();
+    render(<HistoryPanel />);
+    await screen.findByText('dictation number 0');
+    expect(screen.queryByText('dictation number 100')).not.toBeInTheDocument();
+    await user.click(screen.getByText('Show more (30)'));
+    expect(await screen.findByText('dictation number 129')).toBeInTheDocument();
+    expect(screen.queryByText(/Show more/)).not.toBeInTheDocument();
+  });
+
+  it('imports from FluidVoice when it is on this Mac', async () => {
+    fluidVoice = true;
+    const user = userEvent.setup();
+    render(<HistoryPanel />);
+    await user.click(await screen.findByText('Import from FluidVoice'));
+    expect(await screen.findByText('Brought over 1 dictations from FluidVoice')).toBeInTheDocument();
+    expect(await screen.findByText('imported from fluid')).toBeInTheDocument();
   });
 });

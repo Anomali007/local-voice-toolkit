@@ -7,12 +7,13 @@ import DictionaryPanel from "./components/DictionaryPanel";
 import ModelManager from "./components/ModelManager";
 import SettingsPanel from "./components/SettingsPanel";
 import HistoryPanel from "./components/HistoryPanel";
+import StatsPanel from "./components/StatsPanel";
 import StatusIndicator from "./components/StatusIndicator";
 import Onboarding from "./components/Onboarding";
 import Splash from "./components/Splash";
-import { BookIcon, ChipIcon, GearIcon, HistoryIcon, MicIcon, SpeakerIcon, Spinner } from "./components/ui";
+import { BookIcon, ChartIcon, ChipIcon, GearIcon, HistoryIcon, MicIcon, SpeakerIcon, Spinner } from "./components/ui";
 
-type Tab = "dictation" | "history" | "dictionary" | "reader" | "models" | "settings";
+type Tab = "dictation" | "history" | "stats" | "dictionary" | "reader" | "models" | "settings";
 
 interface AppSettings {
   onboarding_completed: boolean;
@@ -81,6 +82,7 @@ function App() {
   const tabs: { id: Tab; label: string; Icon: (p: { className?: string }) => JSX.Element }[] = [
     { id: "dictation", label: "Dictation", Icon: MicIcon },
     { id: "history", label: "History", Icon: HistoryIcon },
+    { id: "stats", label: "Stats", Icon: ChartIcon },
     { id: "dictionary", label: "Words", Icon: BookIcon },
     { id: "reader", label: "Reader", Icon: SpeakerIcon },
     { id: "models", label: "Models", Icon: ChipIcon },
@@ -136,9 +138,10 @@ function App() {
 
       {/* Content */}
       <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[600px] px-7 pb-10 pt-7">
+        <div className={`mx-auto px-7 pb-10 pt-7 ${activeTab === "stats" ? "max-w-[920px]" : "max-w-[600px]"}`}>
           {activeTab === "dictation" && <DictationPanel />}
           {activeTab === "history" && <HistoryPanel />}
+          {activeTab === "stats" && <StatsPanel />}
           {activeTab === "dictionary" && <DictionaryPanel />}
           {activeTab === "reader" && <ScreenReader />}
           {activeTab === "models" && <ModelManager />}

@@ -31,7 +31,7 @@ interface Settings {
   // Dictation extras
   remove_fillers: boolean;
   history_enabled: boolean;
-  history_max_entries: number;
+  history_keep: number;
   sound_on_start: boolean;
   sound_on_stop: boolean;
   sound_start_name: string;
@@ -44,7 +44,7 @@ interface Settings {
 const EXTRA_DEFAULTS = {
   remove_fillers: true,
   history_enabled: true,
-  history_max_entries: 1000,
+  history_keep: 0,
   sound_on_start: false,
   sound_on_stop: false,
   sound_start_name: "Tink",
@@ -53,7 +53,7 @@ const EXTRA_DEFAULTS = {
   hold_space_to_pause: true,
 };
 
-const HISTORY_SIZES = [100, 500, 1000, 5000] as const;
+const HISTORY_SIZES = [0, 1000, 5000, 10000, 50000] as const;
 const FALLBACK_SOUNDS = ["Tink", "Pop", "Glass", "Purr", "Morse", "Bottle", "Frog", "Ping", "Hero", "Submarine"];
 
 const OVERLAY_POSITIONS = [
@@ -421,7 +421,7 @@ export default function SettingsPanel() {
       </Section>
 
       {/* History */}
-      <Section title="History" note="Finished dictations are saved only on this Mac, in a file only you can read. Text is never written to the log.">
+      <Section title="History" note="Finished dictations are saved only on this Mac, in a database only you can read. Text is never written to the log.">
         <div className="card card-list">
           <SettingRow label="Save history">
             <Toggle
@@ -430,18 +430,18 @@ export default function SettingsPanel() {
               onChange={(v) => updateSetting("history_enabled", v)}
             />
           </SettingRow>
-          <SettingRow label="Keep the latest" hint="Older dictations are removed automatically.">
+          <SettingRow label="Keep" hint="Forever keeps every dictation, like FluidVoice. A limit removes the oldest.">
             <select
               aria-label="History size"
-              value={settings.history_max_entries}
-              onChange={(e) => updateSetting("history_max_entries", parseInt(e.target.value, 10))}
+              value={settings.history_keep}
+              onChange={(e) => updateSetting("history_keep", parseInt(e.target.value, 10))}
             >
-              {(HISTORY_SIZES.some((n) => n === settings.history_max_entries)
+              {(HISTORY_SIZES.some((n) => n === settings.history_keep)
                 ? [...HISTORY_SIZES]
-                : [settings.history_max_entries, ...HISTORY_SIZES]
+                : [settings.history_keep, ...HISTORY_SIZES]
               ).map((n) => (
                 <option key={n} value={n}>
-                  {n.toLocaleString()} dictations
+                  {n === 0 ? "Forever" : `Latest ${n.toLocaleString()}`}
                 </option>
               ))}
             </select>
