@@ -19,6 +19,34 @@ use tauri::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+/// Hard ceiling for the log file in one run: a runaway log loop once wrote
+/// 430 MB in half an hour. Past this, lines are dropped until next launch.
+const LOG_CAP_BYTES: u64 = 20_000_000;
+
+struct CappedLog {
+    file: std::fs::File,
+    written: u64,
+    limit: u64,
+}
+
+impl std::io::Write for CappedLog {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.written >= self.limit {
+            return Ok(buf.len()); // drop silently; keep the app running
+        }
+        let n = self.file.write(buf)?;
+        self.written += n as u64;
+        if self.written >= self.limit {
+            let _ = self.file.write_all(b"\n[log capped for this run]\n");
+        }
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
 pub fn run() {
     // Initialize tracing: stdout, plus a log file, since a launched app's
     // stdout goes nowhere (~/Library/Logs/Blah³/blah3.log).
@@ -35,7 +63,8 @@ pub fn run() {
             use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
             let file = std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(&path).ok()?;
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-            Some(file)
+            let already = file.metadata().map(|m| m.len()).unwrap_or(0);
+            Some(CappedLog { file, written: already, limit: LOG_CAP_BYTES })
         });
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(

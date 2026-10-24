@@ -216,9 +216,15 @@ fn run_tap() {
         move |_proxy, etype, event| {
             match etype {
                 CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
-                    tracing::warn!("Space-pause tap disabled by system");
-                    // Re-enable only if a recording still wants it.
-                    set_tap_enabled(WANT.load(Ordering::SeqCst) && recording());
+                    // Our own CGEventTapEnable(false) also arrives here as
+                    // "disabled by user input". Only act when a recording
+                    // wants the tap back; calling disable again from here
+                    // re-fires this event in a tight loop (it filled the log
+                    // at ~16k lines/s and pinned a core).
+                    if WANT.load(Ordering::SeqCst) && recording() {
+                        tracing::warn!("Space-pause tap disabled by system - re-enabling");
+                        set_tap_enabled(true);
+                    }
                     return None;
                 }
                 CGEventType::KeyDown | CGEventType::KeyUp => {}
