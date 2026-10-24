@@ -115,7 +115,9 @@ pub fn refresh_hotkeys(app: &AppHandle) -> Result<(), String> {
 
     // unregister_all also dropped the Escape-cancel shortcut; restore it if a
     // recording is in flight.
-    if app.state::<Arc<HotkeyState>>().is_recording.load(Ordering::SeqCst) {
+    if app.state::<Arc<HotkeyState>>().is_recording.load(Ordering::SeqCst)
+        || crate::commands::tts::is_speaking()
+    {
         register_cancel_shortcut(app);
     }
 
@@ -553,7 +555,24 @@ fn register_cancel_shortcut(app: &AppHandle) {
 
 /// Release the global Escape shortcut once recording ends.
 fn unregister_cancel_shortcut(app: &AppHandle) {
+    // Escape also stops a reading in progress; keep it while one is running.
+    if crate::commands::tts::is_speaking() {
+        return;
+    }
     cancel_shortcut_worker(app, false);
+}
+
+/// Arm Escape-to-stop for a read-aloud session. Goes through the worker, so
+/// it is safe from any context except it must never block on the plugin lock.
+pub(crate) fn arm_read_escape(app: &AppHandle) {
+    register_cancel_shortcut(app);
+}
+
+/// Release Escape after a reading, unless a dictation still needs it.
+pub(crate) fn disarm_read_escape(app: &AppHandle) {
+    if !app.state::<Arc<HotkeyState>>().is_recording.load(Ordering::SeqCst) {
+        cancel_shortcut_worker(app, false);
+    }
 }
 
 /// The global-shortcut plugin runs handlers while holding its shortcut-table
@@ -573,7 +592,10 @@ fn cancel_shortcut_worker(app: &AppHandle, register: bool) {
                     if register {
                         let result = app.global_shortcut().on_shortcut(cancel_shortcut(), |app, _shortcut, event| {
                             if event.state == ShortcutState::Pressed {
+                                // Only flags/emits here: (un)registering Escape
+                                // from a handler deadlocks, the worker does it.
                                 cancel_dictation(app);
+                                crate::commands::tts::stop_reading();
                             }
                         });
                         if let Err(e) = result {
@@ -721,7 +743,8 @@ pub fn toggle_read_selection(app: &AppHandle) {
             }
         };
 
-        match crate::commands::tts::speak_text(
+        match crate::commands::tts::speak_text_impl(
+            Some(app_handle.clone()),
             text,
             settings.tts_voice.clone(),
             settings.tts_speed,

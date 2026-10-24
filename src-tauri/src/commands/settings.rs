@@ -23,6 +23,19 @@ pub struct AppSettings {
     pub silence_duration: f32,
     // Onboarding
     pub onboarding_completed: bool,
+    // Overlay (dictation + read-aloud). Strings are parsed leniently in
+    // `overlay.rs`, so an unknown value falls back instead of failing the load.
+    /// "top-center" | "top-left" | "top-right" | "bottom-center" | "bottom-left" | "bottom-right"
+    pub overlay_position: String,
+    /// "compact" | "regular" | "large"
+    pub overlay_size: String,
+    /// Transcript lines shown while dictating (2-8).
+    pub overlay_max_lines: u8,
+    /// Dictation overlay ignores the mouse entirely.
+    pub overlay_click_through: bool,
+    /// Nudge from the anchored position, in logical px (right/down positive).
+    pub overlay_offset_x: i32,
+    pub overlay_offset_y: i32,
 }
 
 fn default_tts_engine() -> String {
@@ -59,6 +72,12 @@ impl Default for AppSettings {
             silence_threshold: default_silence_threshold(),
             silence_duration: default_silence_duration(),
             onboarding_completed: false,
+            overlay_position: "top-center".to_string(),
+            overlay_size: "regular".to_string(),
+            overlay_max_lines: 4,
+            overlay_click_through: true,
+            overlay_offset_x: 0,
+            overlay_offset_y: 0,
         }
     }
 }
@@ -217,6 +236,16 @@ mod tests {
         assert_eq!(s.stt_model, d.stt_model);
         assert_eq!(s.stt_hotkey, d.stt_hotkey);
         assert_eq!(s.silence_duration, d.silence_duration);
+    }
+
+    #[test]
+    fn overlay_defaults_match_the_original_look() {
+        let s = parse_settings("{}").unwrap();
+        assert_eq!(s.overlay_position, "top-center");
+        assert_eq!(s.overlay_size, "regular");
+        assert_eq!(s.overlay_max_lines, 4);
+        assert!(s.overlay_click_through);
+        assert_eq!((s.overlay_offset_x, s.overlay_offset_y), (0, 0));
     }
 
     #[test]

@@ -1,7 +1,10 @@
 import { render, screen, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { listen } from '@tauri-apps/api/event';
-import DictationOverlay, { liveTail } from './DictationOverlay';
+import { invoke } from '@tauri-apps/api/core';
+import { userEvent } from '@testing-library/user-event';
+import DictationOverlay, { liveTail, tailChars } from './DictationOverlay';
+import { formatClock, stepSpeed } from './ReadingOverlay';
 
 type Handler = (event: { payload: unknown }) => void;
 const handlers = new Map<string, Handler>();
@@ -52,5 +55,109 @@ describe('DictationOverlay', () => {
     fire('stt-partial-result', 'old words');
     fire('stt-recording-started', { target_app: null });
     expect(screen.queryByText('old words')).not.toBeInTheDocument();
+  });
+});
+
+describe('DictationOverlay reading mode', () => {
+  const settings = { overlay_size: 'regular', overlay_max_lines: 4, tts_speed: 1.3 };
+  const progress = (over: Record<string, unknown> = {}) => ({
+    elapsed_s: 12, total_s: 65, total_estimated: true, speed: 1.3, chunk_index: 2, chunk_count: 5, ...over,
+  });
+
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_settings') return settings;
+      if (cmd === 'set_tts_speed') return 1.4;
+      return undefined;
+    });
+  });
+
+  const startReading = async () => {
+    render(<DictationOverlay />);
+    await vi.waitFor(() => expect(handlers.has('tts-progress')).toBe(true));
+    fire('tts-reading', true);
+    await act(async () => {}); // let the settings read settle
+  };
+
+  it('switches to reading mode and shows elapsed / remaining', async () => {
+    await startReading();
+    expect(screen.getByText('Reading aloud')).toBeInTheDocument();
+    expect(screen.getByText('Preparing…')).toBeInTheDocument();
+
+    fire('tts-progress', progress());
+    expect(screen.getByText('0:12')).toBeInTheDocument();
+    expect(screen.getByText('~-0:53')).toBeInTheDocument(); // 65 - 12, estimated
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '18');
+    expect(screen.getByText('1.3×')).toBeInTheDocument();
+    expect(screen.queryByText(/Recording/)).not.toBeInTheDocument();
+
+    fire('tts-progress', progress({ elapsed_s: 65, total_estimated: false }));
+    expect(screen.getByText('-0:00')).toBeInTheDocument();
+  });
+
+  it('+ and − call set_tts_speed with the next step', async () => {
+    const user = userEvent.setup();
+    await startReading();
+    fire('tts-progress', progress());
+
+    await user.click(screen.getByRole('button', { name: 'Faster' }));
+    expect(invoke).toHaveBeenCalledWith('set_tts_speed', { speed: 1.4 });
+    await vi.waitFor(() => expect(screen.getByText('1.4×')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Slower' }));
+    expect(invoke).toHaveBeenCalledWith('set_tts_speed', { speed: 1.3 });
+  });
+
+  it('Stop invokes stop_speaking', async () => {
+    const user = userEvent.setup();
+    await startReading();
+    await user.click(screen.getByRole('button', { name: /Stop/ }));
+    expect(invoke).toHaveBeenCalledWith('stop_speaking');
+  });
+
+  it('speed stops at the supported range', async () => {
+    await startReading();
+    fire('tts-progress', progress({ speed: 3.0 }));
+    expect(screen.getByRole('button', { name: 'Faster' })).toBeDisabled();
+    fire('tts-progress', progress({ speed: 0.5 }));
+    expect(screen.getByRole('button', { name: 'Slower' })).toBeDisabled();
+  });
+
+  it('returns to the dictation face when reading ends or dictation starts', async () => {
+    await startReading();
+    fire('tts-reading', false);
+    expect(screen.queryByText('Reading aloud')).not.toBeInTheDocument();
+    fire('tts-reading', true);
+    expect(screen.getByText('Reading aloud')).toBeInTheDocument();
+    fire('stt-recording-started', { target_app: null });
+    await act(async () => {});
+    expect(screen.queryByText('Reading aloud')).not.toBeInTheDocument();
+  });
+});
+
+describe('ReadingOverlay helpers', () => {
+  it('formats clocks and steps speed on the 0.1 grid', () => {
+    expect(formatClock(75)).toBe('1:15');
+    expect(formatClock(-3)).toBe('0:00');
+    expect(stepSpeed(1.3, 1)).toBe(1.4);
+    expect(stepSpeed(1.1, -1)).toBe(1);
+    expect(stepSpeed(3, 1)).toBe(3);
+    expect(stepSpeed(0.5, -1)).toBe(0.5);
+  });
+});
+
+describe('DictationOverlay line setting', () => {
+  it('clamps the transcript to the configured number of lines', async () => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockImplementation(async (cmd: string) =>
+      cmd === 'get_settings' ? { overlay_size: 'large', overlay_max_lines: 7, tts_speed: 1 } : undefined);
+    render(<DictationOverlay />);
+    await vi.waitFor(() => expect(handlers.has('stt-partial-result')).toBe(true));
+    fire('stt-recording-started', { target_app: null });
+    fire('stt-partial-result', 'some live words');
+    await act(async () => {});
+    await vi.waitFor(() => expect(screen.getByText('some live words')).toHaveStyle({ WebkitLineClamp: '7' }));
+    expect(tailChars(7)).toBeGreaterThan(tailChars(4));
   });
 });

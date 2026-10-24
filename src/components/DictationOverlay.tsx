@@ -1,7 +1,20 @@
 import { useEffect, useState, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import ReadingOverlay, { type TtsProgress } from "./ReadingOverlay";
 
 type OverlayState = "recording" | "transcribing" | "result" | "error";
+type OverlayMode = "dictation" | "reading";
+
+/** Type/window scale for each size preset; mirrors `size_scale` in overlay.rs. */
+const SIZE_SCALE: Record<string, number> = { compact: 0.85, regular: 1, large: 1.2 };
+const DEFAULT_LINES = 4;
+
+interface OverlaySettings {
+  overlay_size?: string;
+  overlay_max_lines?: number;
+  tts_speed?: number;
+}
 
 interface FrontmostAppInfo {
   name: string;
@@ -20,7 +33,17 @@ export function liveTail(text: string, max = 220): string {
   return "…" + (space > 0 ? cut.slice(space) : cut);
 }
 
+/** Characters of live transcript worth keeping for a given line budget. */
+export function tailChars(lines: number): number {
+  return lines * 55;
+}
+
 export default function DictationOverlay() {
+  const [mode, setMode] = useState<OverlayMode>("dictation");
+  const [scale, setScale] = useState(1);
+  const [lines, setLines] = useState(DEFAULT_LINES);
+  const [speed, setSpeed] = useState(1);
+  const [progress, setProgress] = useState<TtsProgress | null>(null);
   const [state, setState] = useState<OverlayState>("recording");
   const [targetApp, setTargetApp] = useState<string | null>(null);
   const [result, setResult] = useState<string>("");
@@ -34,13 +57,49 @@ export default function DictationOverlay() {
   const levelHistoryRef = useRef<number[]>(new Array(40).fill(0));
   const startTimeRef = useRef<number>(Date.now());
 
+  // Size and line count come from settings; re-read each time the overlay is
+  // about to be used so changes apply without a restart.
+  const loadSettings = async () => {
+    try {
+      const s = await invoke<OverlaySettings>("get_settings");
+      if (!s) return;
+      setScale(SIZE_SCALE[s.overlay_size ?? "regular"] ?? 1);
+      const n = Math.round(s.overlay_max_lines ?? DEFAULT_LINES);
+      setLines(Math.min(8, Math.max(2, n)));
+      if (typeof s.tts_speed === "number") setSpeed(s.tts_speed);
+    } catch (err) {
+      console.error("Failed to load overlay settings:", err);
+    }
+  };
+
   // Event listeners
   useEffect(() => {
     const unlisteners: (() => void)[] = [];
 
     const setup = async () => {
       unlisteners.push(
+        await listen<boolean>("tts-reading", (event) => {
+          if (event.payload) {
+            setMode("reading");
+            setProgress(null);
+            loadSettings();
+          } else {
+            setMode("dictation");
+          }
+        })
+      );
+
+      unlisteners.push(
+        await listen<TtsProgress>("tts-progress", (event) => {
+          setProgress(event.payload);
+          setSpeed(event.payload.speed);
+        })
+      );
+
+      unlisteners.push(
         await listen<RecordingStartedPayload>("stt-recording-started", (event) => {
+          setMode("dictation");
+          loadSettings();
           setState("recording");
           setResult("");
           setError("");
@@ -199,16 +258,22 @@ export default function DictationOverlay() {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const palette = PALETTES[state];
+  const palette = mode === "reading" ? READING_PALETTE : PALETTES[state];
+  const clamp = {
+    display: "-webkit-box",
+    WebkitBoxOrient: "vertical" as const,
+    WebkitLineClamp: lines,
+    overflow: "hidden",
+  };
 
   return (
-    <div className="flex h-full w-full items-center justify-center p-4">
+    <div className="flex h-full w-full items-center justify-center p-4" style={{ zoom: scale }}>
       <div className="relative w-full max-w-[368px]">
         {/* Colour bloom behind the card */}
         <div
           ref={glowRef}
           aria-hidden="true"
-          className={`absolute -inset-1.5 rounded-[30px] blur-[20px] ${state === "recording" ? "" : "overlay-breathe"}`}
+          className={`absolute -inset-1.5 rounded-[30px] blur-[20px] ${mode === "dictation" && state === "recording" ? "" : "overlay-breathe"}`}
           style={{ backgroundImage: palette, backgroundSize: "300% 100%", opacity: 0.5 }}
         />
 
@@ -225,6 +290,10 @@ export default function DictationOverlay() {
               WebkitBackdropFilter: "blur(30px) saturate(1.7)",
             }}
           >
+            {mode === "reading" ? (
+              <ReadingOverlay progress={progress} speed={speed} onSpeedChange={setSpeed} />
+            ) : (
+              <>
             {/* Status row */}
             <div className="flex items-center justify-between px-4 pb-1 pt-3">
               <div className="flex items-center gap-2">
@@ -285,8 +354,8 @@ export default function DictationOverlay() {
             <div className="min-h-[56px] px-4 pb-4 pt-2.5">
               {state === "recording" &&
                 (partialResult ? (
-                  <p className="line-clamp-4 break-words text-[17px] font-semibold leading-snug tracking-[-0.012em] text-white">
-                    {liveTail(partialResult)}
+                  <p style={clamp} className="break-words text-[17px] font-semibold leading-snug tracking-[-0.012em] text-white">
+                    {liveTail(partialResult, tailChars(lines))}
                   </p>
                 ) : (
                   <p className="text-[12px] text-white/55">
@@ -295,14 +364,14 @@ export default function DictationOverlay() {
                 ))}
               {state === "transcribing" &&
                 (partialResult ? (
-                  <p className="line-clamp-4 break-words text-[17px] font-semibold leading-snug tracking-[-0.012em] text-white/80">
+                  <p style={clamp} className="break-words text-[17px] font-semibold leading-snug tracking-[-0.012em] text-white/80">
                     {partialResult}
                   </p>
                 ) : (
                   <p className="text-[12px] text-white/55">Transcribing your speech...</p>
                 ))}
               {state === "result" && (
-                <p className="line-clamp-4 break-words text-[17px] font-semibold leading-snug tracking-[-0.012em] text-white">
+                <p style={clamp} className="break-words text-[17px] font-semibold leading-snug tracking-[-0.012em] text-white">
                   {result || "No speech detected"}
                 </p>
               )}
@@ -312,6 +381,8 @@ export default function DictationOverlay() {
                 </p>
               )}
             </div>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -326,6 +397,9 @@ const PALETTES: Record<OverlayState, string> = {
   result: "linear-gradient(90deg, #34e0a1, #22b8f7, #5a8cf0, #34e0a1)",
   error: "linear-gradient(90deg, #ff5d73, #ff3d3d, #c13a8a, #ff5d73)",
 };
+
+/** Reading is the calm sibling of the hot-mic look: cool teal and blue, no warm hues. */
+const READING_PALETTE = "linear-gradient(90deg, #5eead4, #38bdf8, #818cf8, #5eead4)";
 
 const DOTS: Record<OverlayState, string> = {
   recording: "#ff4d6d",

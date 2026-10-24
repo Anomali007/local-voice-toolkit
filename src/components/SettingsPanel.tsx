@@ -21,7 +21,29 @@ interface Settings {
   silence_duration: number;
   // Onboarding
   onboarding_completed: boolean;
+  // Overlay
+  overlay_position: string;
+  overlay_size: string;
+  overlay_max_lines: number;
+  overlay_click_through: boolean;
+  overlay_offset_x: number;
+  overlay_offset_y: number;
 }
+
+const OVERLAY_POSITIONS = [
+  ["top-left", "Top left"],
+  ["top-center", "Top center"],
+  ["top-right", "Top right"],
+  ["bottom-left", "Bottom left"],
+  ["bottom-center", "Bottom center"],
+  ["bottom-right", "Bottom right"],
+] as const;
+
+const OVERLAY_SIZES = [
+  ["compact", "Compact"],
+  ["regular", "Regular"],
+  ["large", "Large"],
+] as const;
 
 interface HardwareProfile {
   chip: string;
@@ -124,6 +146,20 @@ export default function SettingsPanel() {
       } catch {
         console.error("All methods to open system settings failed");
       }
+    }
+  };
+
+  // Typing "-" or clearing the box is not a number yet: wait for a real one.
+  const commitNudge = (key: "overlay_offset_x" | "overlay_offset_y", raw: string) => {
+    const n = Number(raw);
+    if (raw.trim() !== "" && Number.isFinite(n)) updateSetting(key, Math.round(n));
+  };
+
+  const previewOverlay = async () => {
+    try {
+      await invoke("preview_overlay");
+    } catch (err) {
+      console.error("Failed to preview overlay:", err);
     }
   };
 
@@ -233,6 +269,96 @@ export default function SettingsPanel() {
               checked={settings.launch_at_login}
               onChange={(v) => updateLaunchAtLogin(v)}
             />
+          </SettingRow>
+        </div>
+      </Section>
+
+      {/* Overlay */}
+      <Section title="Overlay" note="The floating panel shown while you dictate and while Blah³ reads aloud.">
+        <div className="card card-list">
+          <SettingRow label="Position" hint="Stays inside the menu bar and Dock.">
+            <select
+              aria-label="Overlay position"
+              value={settings.overlay_position}
+              onChange={(e) => updateSetting("overlay_position", e.target.value)}
+            >
+              {OVERLAY_POSITIONS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </SettingRow>
+          <SettingRow label="Nudge" hint="Move it from that spot, in points.">
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <label className="flex items-center gap-1">
+                X
+                <input
+                  type="number"
+                  aria-label="Overlay nudge X"
+                  step={4}
+                  defaultValue={settings.overlay_offset_x}
+                  onChange={(e) => commitNudge("overlay_offset_x", e.target.value)}
+                  className="!w-16"
+                />
+              </label>
+              <label className="flex items-center gap-1">
+                Y
+                <input
+                  type="number"
+                  aria-label="Overlay nudge Y"
+                  step={4}
+                  defaultValue={settings.overlay_offset_y}
+                  onChange={(e) => commitNudge("overlay_offset_y", e.target.value)}
+                  className="!w-16"
+                />
+              </label>
+            </div>
+          </SettingRow>
+          <SettingRow label="Size">
+            <div className="flex gap-1.5" role="group" aria-label="Overlay size">
+              {OVERLAY_SIZES.map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={settings.overlay_size === value}
+                  onClick={() => updateSetting("overlay_size", value)}
+                  className={settings.overlay_size === value ? "btn-primary" : "btn-secondary"}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </SettingRow>
+          <SettingRow label="Transcript lines" hint="How many lines of live text to show.">
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                aria-label="Transcript lines"
+                min="2"
+                max="8"
+                step="1"
+                value={settings.overlay_max_lines}
+                onChange={(e) => updateSetting("overlay_max_lines", parseInt(e.target.value, 10))}
+                className="!w-28"
+              />
+              <span className="w-4 text-right text-[13px] tabular-nums text-muted">{settings.overlay_max_lines}</span>
+            </div>
+          </SettingRow>
+          <SettingRow
+            label="Click-through while dictating"
+            hint="The overlay ignores the mouse so it never blocks what is under it. Read-aloud always takes clicks, for its buttons."
+          >
+            <Toggle
+              label="Click-through while dictating"
+              checked={settings.overlay_click_through}
+              onChange={(v) => updateSetting("overlay_click_through", v)}
+            />
+          </SettingRow>
+          <SettingRow label="Preview" hint="Shows the overlay for about 3 seconds.">
+            <button type="button" onClick={previewOverlay} className="btn-secondary">
+              Show preview
+            </button>
           </SettingRow>
         </div>
       </Section>
