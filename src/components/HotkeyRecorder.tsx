@@ -168,23 +168,25 @@ export default function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps)
     : "Click to set";
 
   return (
-    <button
-      ref={buttonRef}
-      onClick={handleClick}
-      className={`
-        relative px-3 py-2 min-w-[160px] text-left
-        bg-slate-800 border rounded text-sm
-        transition-all duration-150
-        ${isRecording
-          ? "border-sky-500 ring-2 ring-sky-500/30"
-          : "border-slate-700 hover:border-slate-600"
-        }
-        ${value ? "text-slate-100" : "text-slate-400"}
-      `}
-    >
-      <span className="pr-6">{displayValue}</span>
+    <div className="relative inline-block">
+      <button
+        ref={buttonRef}
+        onClick={handleClick}
+        className={`
+          relative px-3 py-2 min-w-[160px] text-left
+          bg-slate-800 border rounded text-sm
+          transition-all duration-150
+          ${isRecording
+            ? "border-sky-500 ring-2 ring-sky-500/30"
+            : "border-slate-700 hover:border-slate-600"
+          }
+          ${value ? "text-slate-100" : "text-slate-400"}
+        `}
+      >
+        <span className="pr-6">{displayValue}</span>
+      </button>
 
-      {/* Clear button */}
+      {/* Clear button: a sibling, not nested inside the recorder button */}
       {value && !isRecording && (
         <button
           onClick={handleClear}
@@ -193,6 +195,7 @@ export default function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps)
                      text-slate-500 hover:text-slate-300
                      rounded hover:bg-slate-700 transition-colors"
           title="Clear hotkey"
+          aria-label="Clear hotkey"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -204,6 +207,6 @@ export default function HotkeyRecorder({ value, onChange }: HotkeyRecorderProps)
           </svg>
         </button>
       )}
-    </button>
+    </div>
   );
 }
