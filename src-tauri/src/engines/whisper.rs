@@ -155,3 +155,32 @@ impl SpeechToText for WhisperEngine {
         }
     }
 }
+
+#[cfg(test)]
+mod real_models {
+    use super::*;
+
+    /// `cargo test --release --lib whisper_real -- --ignored --nocapture`
+    /// Times each downloaded model on a known WAV (WHISPER_WAV, any rate).
+    #[test]
+    #[ignore]
+    fn whisper_real_benchmark() {
+        let wav = std::env::var("WHISPER_WAV").expect("set WHISPER_WAV");
+        let (samples, rate) = crate::audio::processing::read_wav(std::path::Path::new(&wav)).unwrap();
+        let audio = crate::audio::capture::convert_rate(&samples, rate, 16_000);
+        let dir = dirs::data_dir().unwrap().join("com.blahcubed.app/models/stt");
+        for model in ["ggml-base.en.bin", "ggml-small.en.bin"] {
+            let path = dir.join(model);
+            if !path.exists() {
+                continue;
+            }
+            let t0 = std::time::Instant::now();
+            let engine = WhisperEngine::new(&path.to_string_lossy()).unwrap();
+            let load = t0.elapsed();
+            let _ = engine.transcribe(&audio).unwrap(); // warm-up
+            let t1 = std::time::Instant::now();
+            let text = engine.transcribe(&audio).unwrap();
+            println!("{model}: load {load:?}, transcribe {:?} for {:.1}s audio -> {text}", t1.elapsed(), audio.len() as f32 / 16_000.0);
+        }
+    }
+}

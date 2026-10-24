@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -547,23 +547,48 @@ fn cancel_shortcut() -> Shortcut {
 /// Register a global Escape shortcut for the duration of a recording so the
 /// user can bail out without transcribing/pasting.
 fn register_cancel_shortcut(app: &AppHandle) {
-    let result = app
-        .global_shortcut()
-        .on_shortcut(cancel_shortcut(), |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                cancel_dictation(app);
-            }
-        });
-    if let Err(e) = result {
-        // Non-fatal: recording still works, just no Escape-to-cancel
-        tracing::warn!("Failed to register Escape cancel shortcut: {}", e);
-    }
+    cancel_shortcut_worker(app, true);
 }
 
 /// Release the global Escape shortcut once recording ends.
 fn unregister_cancel_shortcut(app: &AppHandle) {
-    if let Err(e) = app.global_shortcut().unregister(cancel_shortcut()) {
-        tracing::debug!("Failed to unregister Escape cancel shortcut: {}", e);
+    cancel_shortcut_worker(app, false);
+}
+
+/// The global-shortcut plugin runs handlers while holding its shortcut-table
+/// lock, and (un)registering takes the same lock. Doing it from inside a
+/// handler - pressing Escape cancels, which unregisters Escape - deadlocked
+/// the main thread and froze the overlay. A worker thread applies the
+/// changes in order once the handler has returned.
+fn cancel_shortcut_worker(app: &AppHandle, register: bool) {
+    static WORKER: OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<bool>>> = OnceLock::new();
+    let sender = WORKER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        let app = app.clone();
+        std::thread::Builder::new()
+            .name("cancel-shortcut".into())
+            .spawn(move || {
+                for register in rx {
+                    if register {
+                        let result = app.global_shortcut().on_shortcut(cancel_shortcut(), |app, _shortcut, event| {
+                            if event.state == ShortcutState::Pressed {
+                                cancel_dictation(app);
+                            }
+                        });
+                        if let Err(e) = result {
+                            // Non-fatal: recording still works, just no Escape-to-cancel
+                            tracing::warn!("Failed to register Escape cancel shortcut: {}", e);
+                        }
+                    } else if let Err(e) = app.global_shortcut().unregister(cancel_shortcut()) {
+                        tracing::debug!("Failed to unregister Escape cancel shortcut: {}", e);
+                    }
+                }
+            })
+            .expect("spawn cancel-shortcut worker");
+        std::sync::Mutex::new(tx)
+    });
+    if let Ok(tx) = sender.lock() {
+        let _ = tx.send(register);
     }
 }
 
