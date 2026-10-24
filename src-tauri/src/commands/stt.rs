@@ -202,10 +202,8 @@ pub async fn transcribe_audio(
 
     let start = std::time::Instant::now();
 
-    let engine = crate::engines::whisper::get_or_load_cached(&model_path)
-        .map_err(|e| format!("Failed to load Whisper model '{}': {}", model_path, e))?;
-    let text = engine.transcribe(&audio_data)
-        .map_err(|e| format!("Transcription failed: {}", e))?;
+    let text = crate::engines::stt::transcribe(&model_path, &audio_data)
+        .map_err(|e| format!("Transcription failed ('{}'): {}", model_path, e))?;
 
     let duration_ms = start.elapsed().as_millis() as u64;
     tracing::info!("Transcription completed in {}ms: {} chars", duration_ms, text.chars().count());
@@ -226,7 +224,8 @@ fn resolve_stt_model_path(requested: &str) -> Result<String, String> {
 fn check_inside(dir: &std::path::Path, requested: &std::path::Path) -> Result<String, String> {
     let dir = dir.canonicalize().map_err(|_| "Speech models folder not found".to_string())?;
     let path = requested.canonicalize().map_err(|_| "Speech model not found. Download it from the Models tab.".to_string())?;
-    if path.starts_with(&dir) && path.is_file() {
+    // Whisper models are single files; Parakeet is a directory.
+    if path.starts_with(&dir) && (path.is_file() || crate::engines::stt::is_parakeet(&path.to_string_lossy())) {
         Ok(path.to_string_lossy().to_string())
     } else {
         Err("That speech model is outside Blah³'s models folder".into())
@@ -249,5 +248,11 @@ mod path_tests {
         assert!(check_inside(&models, &models.join("../secret.bin")).is_err());
         assert!(check_inside(&models, &root.path().join("secret.bin")).is_err());
         assert!(check_inside(&models, &models.join("missing.bin")).is_err());
+
+        // Parakeet is a directory inside the folder; other directories are not models.
+        std::fs::create_dir_all(models.join("parakeet-tdt-0.6b-v2")).unwrap();
+        std::fs::create_dir_all(models.join("somedir")).unwrap();
+        assert!(check_inside(&models, &models.join("parakeet-tdt-0.6b-v2")).is_ok());
+        assert!(check_inside(&models, &models.join("somedir")).is_err());
     }
 }
