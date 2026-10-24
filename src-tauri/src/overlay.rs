@@ -43,10 +43,44 @@ fn float_over_everything(window: &tauri::WebviewWindow) {
     }
 }
 
+/// Turn the overlay into a non-activating panel. macOS keeps ordinary
+/// windows of other apps off a full-screen app's Space even with
+/// FullScreenAuxiliary set; a non-activating NSPanel (what floating
+/// dictation and launcher apps use) can appear there without taking focus
+/// from the app being dictated into.
+#[cfg(target_os = "macos")]
+fn make_panel(window: &tauri::WebviewWindow) {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+
+    // NSWindowStyleMaskNonactivatingPanel
+    const NONACTIVATING_PANEL: usize = 1 << 7;
+
+    let Ok(ptr) = window.ns_window() else { return };
+    let Some(panel_class) = AnyClass::get(c"NSPanel") else { return };
+    if ptr.is_null() {
+        return;
+    }
+    let ns_window = ptr as *mut AnyObject;
+    // SAFETY: NSPanel is an NSWindow subclass with no extra instance
+    // variables, so re-classing a live NSWindow to it is sound (the same
+    // approach tauri-nspanel uses). Main thread, during setup.
+    unsafe {
+        objc2::ffi::object_setClass(ns_window, panel_class);
+        let mask: usize = msg_send![ns_window, styleMask];
+        let _: () = msg_send![ns_window, setStyleMask: mask | NONACTIVATING_PANEL];
+        let _: () = msg_send![ns_window, setFloatingPanel: true];
+        let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
+        let _: () = msg_send![ns_window, setBecomesKeyOnlyIfNeeded: true];
+    }
+    tracing::info!("Dictation overlay is a non-activating panel");
+}
+
 /// Configure the overlay window once at startup.
 pub fn setup_overlay(app: &AppHandle) {
     #[cfg(target_os = "macos")]
     if let Some(window) = app.get_webview_window("dictation-overlay") {
+        make_panel(&window);
         float_over_everything(&window);
     }
 }

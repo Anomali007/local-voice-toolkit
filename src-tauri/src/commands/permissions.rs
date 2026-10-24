@@ -182,6 +182,9 @@ pub fn open_system_settings(pane: String) -> Result<(), String> {
     let url = match pane.as_str() {
         "microphone" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
         "accessibility" => "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        // The old com.apple.preference.security form fails for this pane on
+        // current macOS (LaunchServices -609); the extension form works.
+        "input_monitoring" => "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ListenEvent",
         _ => return Err(format!("Unknown settings pane: {}", pane)),
     };
 
@@ -199,7 +202,7 @@ pub fn open_system_settings(pane: String) -> Result<(), String> {
                             click menu item "Privacy & Security" of menu "View" of menu bar 1
                         end tell
                     end tell"#,
-                "accessibility" => r#"tell application "System Settings" to activate
+                "accessibility" | "input_monitoring" => r#"tell application "System Settings" to activate
                     delay 0.5
                     tell application "System Events"
                         tell process "System Settings"
