@@ -3,10 +3,13 @@ mod audio;
 mod commands;
 mod dictionary;
 mod engines;
+mod history;
 mod hotkeys;
 mod models;
 mod overlay;
 mod right_option;
+mod sounds;
+mod space_pause;
 mod tray;
 
 use std::sync::Arc;
@@ -126,6 +129,13 @@ pub fn run() {
             commands::tts::stop_speaking,
             commands::tts::set_tts_speed,
             overlay::preview_overlay,
+            history::get_history,
+            history::delete_history_entry,
+            history::clear_history,
+            history::copy_history_entry,
+            history::paste_history_entry,
+            sounds::list_system_sounds,
+            sounds::preview_sound,
             commands::tts::get_voices,
             commands::models::list_models,
             commands::models::download_model,

@@ -72,6 +72,11 @@ fn get_clipboard_text() -> Option<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
 }
 
+/// Put `text` on the clipboard without pasting.
+pub fn copy_to_clipboard(text: &str) -> Result<(), std::io::Error> {
+    set_clipboard(text)
+}
+
 /// Set the clipboard contents
 fn set_clipboard(text: &str) -> Result<(), std::io::Error> {
     use std::io::Write;
