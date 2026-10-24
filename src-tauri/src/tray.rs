@@ -176,7 +176,9 @@ fn handle(app: &AppHandle, id: &str) {
         "quit" => app.exit(0),
         other => {
             if let Some(speed) = other.strip_prefix("speed:").and_then(|v| v.parse::<f32>().ok()) {
-                change_settings(app, |s| s.tts_speed = speed);
+                if let Err(e) = crate::commands::tts::apply_speed(app, speed) {
+                    tracing::warn!("Menu speed change failed: {}", e);
+                }
             } else {
                 // Info rows are disabled; anything else is a no-op.
                 refresh(app);

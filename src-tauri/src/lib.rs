@@ -120,6 +120,8 @@ pub fn run() {
             dictionary::import_fluidvoice_dictionary,
             commands::tts::speak_text,
             commands::tts::stop_speaking,
+            commands::tts::set_tts_speed,
+            overlay::preview_overlay,
             commands::tts::get_voices,
             commands::models::list_models,
             commands::models::download_model,

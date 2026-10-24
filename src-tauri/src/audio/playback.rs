@@ -2,10 +2,12 @@
 
 use anyhow::Result;
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
+use std::collections::VecDeque;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc,
 };
+use std::time::{Duration, Instant};
 use std::thread;
 
 /// Audio player that can be safely sent across threads.
@@ -56,6 +58,57 @@ impl AudioPlayer {
     }
 }
 
+/// Live playback position of a `StreamingPlayer`, readable from any thread.
+#[derive(Default)]
+pub struct PlaybackProgress {
+    position_ms: AtomicU64,
+    chunks_done: AtomicUsize,
+}
+
+impl PlaybackProgress {
+    /// Seconds of queued audio that have actually been played.
+    pub fn position_secs(&self) -> f64 {
+        self.position_ms.load(Ordering::Relaxed) as f64 / 1000.0
+    }
+
+    /// Number of queued chunks that have finished playing.
+    pub fn chunks_done(&self) -> usize {
+        self.chunks_done.load(Ordering::Relaxed)
+    }
+}
+
+/// Tracks playback position across back-to-back chunks: whole finished chunks
+/// plus wall-clock time into the one currently playing.
+#[derive(Default)]
+struct PositionTracker {
+    durations: VecDeque<f64>,
+    finished_secs: f64,
+    finished_chunks: usize,
+    current_started: Option<Instant>,
+}
+
+impl PositionTracker {
+    fn queued(&mut self, secs: f64) {
+        self.durations.push_back(secs);
+    }
+
+    /// `pending` = chunks the sink still holds. Returns the position in seconds.
+    fn update(&mut self, pending: usize, now: Instant) -> f64 {
+        while self.durations.len() > pending {
+            self.finished_secs += self.durations.pop_front().unwrap_or(0.0);
+            self.finished_chunks += 1;
+            self.current_started = None;
+        }
+        match self.durations.front() {
+            Some(front) => {
+                let started = *self.current_started.get_or_insert(now);
+                self.finished_secs + now.saturating_duration_since(started).as_secs_f64().min(*front)
+            }
+            None => self.finished_secs,
+        }
+    }
+}
+
 enum StreamMsg {
     Chunk(Vec<f32>, u32),
     Finish,
@@ -68,6 +121,7 @@ pub struct StreamingPlayer {
     tx: std::sync::mpsc::Sender<StreamMsg>,
     should_stop: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<Result<()>>>,
+    progress: Arc<PlaybackProgress>,
 }
 
 impl StreamingPlayer {
@@ -75,18 +129,25 @@ impl StreamingPlayer {
     pub fn start(should_stop: Arc<AtomicBool>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<StreamMsg>();
         let stop = Arc::clone(&should_stop);
+        let progress = Arc::new(PlaybackProgress::default());
+        let shared = Arc::clone(&progress);
         let handle = thread::spawn(move || -> Result<()> {
             let (_stream, stream_handle) = OutputStream::try_default()?;
             let sink = Sink::try_new(&stream_handle)?;
             let mut finished = false;
+            let mut tracker = PositionTracker::default();
             loop {
+                let pos = tracker.update(sink.len(), Instant::now());
+                shared.position_ms.store((pos * 1000.0) as u64, Ordering::Relaxed);
+                shared.chunks_done.store(tracker.finished_chunks, Ordering::Relaxed);
                 if stop.load(Ordering::SeqCst) {
                     sink.stop();
                     tracing::info!("Playback stopped");
                     return Ok(());
                 }
-                match rx.recv_timeout(std::time::Duration::from_millis(10)) {
+                match rx.recv_timeout(Duration::from_millis(10)) {
                     Ok(StreamMsg::Chunk(samples, rate)) => {
+                        tracker.queued(samples.len() as f64 / rate.max(1) as f64);
                         sink.append(SamplesBuffer::new(1, rate, samples));
                     }
                     Ok(StreamMsg::Finish) => finished = true,
@@ -100,7 +161,12 @@ impl StreamingPlayer {
                 }
             }
         });
-        Self { tx, should_stop, handle: Some(handle) }
+        Self { tx, should_stop, handle: Some(handle), progress }
+    }
+
+    /// Shared handle for reading the playback position from another task.
+    pub fn progress(&self) -> Arc<PlaybackProgress> {
+        Arc::clone(&self.progress)
     }
 
     /// Queue a chunk. Returns false once playback has stopped.
@@ -147,4 +213,30 @@ fn play_audio_sync(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tracker_counts_finished_chunks_and_time_into_the_current_one() {
+        let t0 = Instant::now();
+        let mut t = PositionTracker::default();
+        t.queued(2.0);
+        t.queued(3.0);
+        assert_eq!(t.update(2, t0), 0.0);
+        // 1.5 s into chunk one
+        let p = t.update(2, t0 + Duration::from_millis(1500));
+        assert!((p - 1.5).abs() < 1e-6, "{p}");
+        // sink dropped chunk one: 2.0 finished, chunk two just started
+        let p = t.update(1, t0 + Duration::from_millis(2100));
+        assert!((p - 2.0).abs() < 1e-6, "{p}");
+        assert_eq!(t.finished_chunks, 1);
+        // time into a chunk never exceeds that chunk's length
+        let p = t.update(1, t0 + Duration::from_secs(60));
+        assert!((p - 5.0).abs() < 1e-6, "{p}");
+        t.update(0, t0 + Duration::from_secs(61));
+        assert_eq!(t.finished_chunks, 2);
+    }
 }
