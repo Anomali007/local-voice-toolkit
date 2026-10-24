@@ -126,6 +126,7 @@ pub fn run() {
             commands::tts::stop_speaking,
             commands::tts::set_tts_speed,
             overlay::preview_overlay,
+            overlay::reset_reading_overlay_position,
             commands::tts::get_voices,
             commands::models::list_models,
             commands::models::download_model,

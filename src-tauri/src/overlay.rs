@@ -1,4 +1,6 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 /// Bumped every time the overlay is shown. Delayed hides capture the value at
@@ -57,7 +59,8 @@ const BASE_WIDTH: f64 = 400.0;
 const BASE_HEIGHT: f64 = 230.0;
 /// Extra window height per additional transcript line (17px type, 1.375 leading).
 const LINE_HEIGHT: f64 = 24.0;
-const READING_HEIGHT: f64 = 196.0;
+/// The read-aloud pill, logical points. The window is exactly this size.
+pub const READING_SIZE: (f64, f64) = (300.0, 60.0);
 /// Gap between the overlay and the screen edge, logical px.
 const MARGIN: f64 = 16.0;
 
@@ -68,9 +71,128 @@ pub fn logical_size(mode: OverlayMode, size: &str, lines: u8) -> (f64, f64) {
         OverlayMode::Dictation => {
             BASE_HEIGHT + (lines.clamp(MIN_LINES, MAX_LINES) as f64 - 4.0) * LINE_HEIGHT
         }
-        OverlayMode::Reading => READING_HEIGHT,
+        OverlayMode::Reading => return READING_SIZE,
     };
     (BASE_WIDTH * scale, height * scale)
+}
+
+/// A monitor's usable area in physical pixels and its scale factor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MonitorArea {
+    pub work: PhysRect,
+    pub scale: f64,
+}
+
+impl MonitorArea {
+    fn contains(&self, x: i32, y: i32) -> bool {
+        x >= self.work.x
+            && y >= self.work.y
+            && x < self.work.x + self.work.width as i32
+            && y < self.work.y + self.work.height as i32
+    }
+}
+
+/// Physical window position -> the logical point saved in settings (physical
+/// / scale of the monitor the window's top-left is on). `None` when it is on
+/// no monitor's usable area.
+pub fn to_saved_point(phys: (i32, i32), monitors: &[MonitorArea]) -> Option<(i32, i32)> {
+    let m = monitors.iter().find(|m| m.contains(phys.0, phys.1))?;
+    Some(((phys.0 as f64 / m.scale).round() as i32, (phys.1 as f64 / m.scale).round() as i32))
+}
+
+/// Saved logical point -> physical (x, y, w, h) for a pill of `logical` size.
+/// The first monitor whose usable area holds the point wins (with mixed scale
+/// factors logical spaces can overlap; top-left inside is the test). The pill
+/// is nudged to fit inside that area. `None` when the spot is on no monitor
+/// (e.g. the display was unplugged) so the caller falls back to the default.
+pub fn restore_saved(
+    saved: (i32, i32),
+    monitors: &[MonitorArea],
+    logical: (f64, f64),
+) -> Option<(i32, i32, u32, u32)> {
+    monitors.iter().find_map(|m| {
+        let px = (saved.0 as f64 * m.scale).round() as i32;
+        let py = (saved.1 as f64 * m.scale).round() as i32;
+        if !m.contains(px, py) {
+            return None;
+        }
+        let w = (logical.0 * m.scale).round() as i32;
+        let h = (logical.1 * m.scale).round() as i32;
+        let x = px.min(m.work.x + m.work.width as i32 - w).max(m.work.x);
+        let y = py.min(m.work.y + m.work.height as i32 - h).max(m.work.y);
+        Some((x, y, w.max(1) as u32, h.max(1) as u32))
+    })
+}
+
+/// True while the window shows the reading pill (so moves are the user's).
+static READING_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// When we last moved the window ourselves; the resulting Moved events are
+/// not drags.
+static LAST_PLACED: Mutex<Option<Instant>> = Mutex::new(None);
+static MOVE_SEQ: AtomicU64 = AtomicU64::new(0);
+const PLACEMENT_QUIET: Duration = Duration::from_millis(500);
+const SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
+
+fn monitor_areas(app: &AppHandle) -> Vec<MonitorArea> {
+    app.available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| {
+            let w = m.work_area();
+            MonitorArea {
+                work: PhysRect {
+                    x: w.position.x,
+                    y: w.position.y,
+                    width: w.size.width,
+                    height: w.size.height,
+                },
+                scale: m.scale_factor(),
+            }
+        })
+        .collect()
+}
+
+/// A Moved event on the overlay window: if it is a user drag of the reading
+/// pill, save the spot once the drag settles.
+fn on_overlay_moved(app: &AppHandle, x: i32, y: i32) {
+    if !READING_ACTIVE.load(Ordering::SeqCst) {
+        return;
+    }
+    let recently_placed = LAST_PLACED
+        .lock()
+        .ok()
+        .and_then(|t| *t)
+        .is_some_and(|t| t.elapsed() < PLACEMENT_QUIET);
+    if recently_placed {
+        return;
+    }
+    let seq = MOVE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(SAVE_DEBOUNCE);
+        if MOVE_SEQ.load(Ordering::SeqCst) != seq || !READING_ACTIVE.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some((sx, sy)) = to_saved_point((x, y), &monitor_areas(&app)) else { return };
+        let saved = crate::commands::settings::modify_settings(|s| {
+            s.reading_overlay_x = sx;
+            s.reading_overlay_y = sy;
+            s.reading_overlay_custom = true;
+        });
+        if let Err(e) = saved {
+            tracing::warn!("Could not save reading overlay position: {}", e);
+        }
+    });
+}
+
+/// Forget the dragged spot: the next reading uses the default again.
+#[tauri::command]
+pub fn reset_reading_overlay_position() -> Result<(), String> {
+    crate::commands::settings::modify_settings(|s| {
+        s.reading_overlay_x = 0;
+        s.reading_overlay_y = 0;
+        s.reading_overlay_custom = false;
+    })
 }
 
 /// A rectangle in physical pixels.
@@ -186,6 +308,14 @@ pub fn setup_overlay(app: &AppHandle) {
         make_panel(&window);
         float_over_everything(&window);
     }
+    if let Some(window) = app.get_webview_window("dictation-overlay") {
+        let handle = app.clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::Moved(pos) = event {
+                on_overlay_moved(&handle, pos.x, pos.y);
+            }
+        });
+    }
 }
 
 /// Size, position and mouse behaviour for `mode`, from the saved settings.
@@ -205,7 +335,23 @@ fn configure_window(
         Some(m) => Some(m),
         None => window.current_monitor()?.or(window.primary_monitor()?),
     };
-    if let Some(monitor) = monitor {
+    // Moves made below are ours, not the user's drags.
+    READING_ACTIVE.store(false, Ordering::SeqCst);
+    if let Ok(mut t) = LAST_PLACED.lock() {
+        *t = Some(Instant::now());
+    }
+    let logical = logical_size(mode, &settings.overlay_size, settings.overlay_max_lines);
+    let saved = (mode == OverlayMode::Reading && settings.reading_overlay_custom)
+        .then(|| {
+            restore_saved(
+                (settings.reading_overlay_x, settings.reading_overlay_y),
+                &monitor_areas(app),
+                logical,
+            )
+        })
+        .flatten();
+    let placement = saved.or_else(|| {
+        let monitor = monitor?;
         let work = monitor.work_area();
         let work = PhysRect {
             x: work.position.x,
@@ -213,19 +359,29 @@ fn configure_window(
             width: work.size.width,
             height: work.size.height,
         };
-        let logical = logical_size(mode, &settings.overlay_size, settings.overlay_max_lines);
-        let (x, y, w, h) = place(
-            work,
-            monitor.scale_factor(),
-            logical,
-            Anchor::parse(&settings.overlay_position),
-            (settings.overlay_offset_x, settings.overlay_offset_y),
-        );
+        Some(match mode {
+            OverlayMode::Reading => {
+                place(work, monitor.scale_factor(), logical, Anchor::BottomCenter, (0, 0))
+            }
+            OverlayMode::Dictation => place(
+                work,
+                monitor.scale_factor(),
+                logical,
+                Anchor::parse(&settings.overlay_position),
+                (settings.overlay_offset_x, settings.overlay_offset_y),
+            ),
+        })
+    });
+    if let Some((x, y, w, h)) = placement {
         // Physical units on both calls: the window may still sit on a monitor
         // with a different scale factor than the one it is moving to.
         window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: w, height: h }))?;
         window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))?;
     }
+    if let Ok(mut t) = LAST_PLACED.lock() {
+        *t = Some(Instant::now());
+    }
+    READING_ACTIVE.store(mode == OverlayMode::Reading, Ordering::SeqCst);
 
     // Reading shows buttons, so it must take clicks; dictation follows the setting.
     let click_through = mode == OverlayMode::Dictation && settings.overlay_click_through;
@@ -292,6 +448,7 @@ pub async fn preview_overlay(app: AppHandle) -> Result<(), String> {
 
 /// Hide the dictation overlay window
 pub fn hide_overlay(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    READING_ACTIVE.store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("dictation-overlay") {
         window.hide()?;
         tracing::debug!("Dictation overlay hidden");
@@ -382,6 +539,60 @@ mod tests {
         assert_eq!(h(1), h(2)); // clamped to 2..=8
         assert_eq!(h(30), h(8));
         assert!(logical_size(OverlayMode::Reading, "regular", 8).1 < h(4));
+    }
+
+    fn mon(x: i32, y: i32, w: u32, h: u32, scale: f64) -> MonitorArea {
+        MonitorArea { work: rect(x, y, w, h), scale }
+    }
+
+    #[test]
+    fn reading_pill_is_small_and_ignores_the_size_preset() {
+        let (w, h) = logical_size(OverlayMode::Reading, "large", 8);
+        assert_eq!((w, h), READING_SIZE);
+        assert!((280.0..=320.0).contains(&w) && (56.0..=64.0).contains(&h));
+    }
+
+    #[test]
+    fn saved_spot_on_screen_is_restored() {
+        let monitors = [mon(0, 25, 1440, 875, 1.0)];
+        assert_eq!(restore_saved((300, 400), &monitors, READING_SIZE), Some((300, 400, 300, 60)));
+    }
+
+    #[test]
+    fn saved_spot_scales_on_retina_and_round_trips() {
+        let monitors = [mon(0, 50, 2880, 1750, 2.0)];
+        // Dragged to physical (1000, 900) -> saved as points -> restored.
+        let saved = to_saved_point((1000, 900), &monitors).unwrap();
+        assert_eq!(saved, (500, 450));
+        assert_eq!(restore_saved(saved, &monitors, READING_SIZE), Some((1000, 900, 600, 120)));
+    }
+
+    #[test]
+    fn saved_spot_on_an_unplugged_monitor_falls_back() {
+        // Saved while a second display sat to the right; now only one remains.
+        let monitors = [mon(0, 25, 1440, 875, 1.0)];
+        assert_eq!(restore_saved((2000, 300), &monitors, READING_SIZE), None);
+        assert_eq!(restore_saved((-500, 300), &monitors, READING_SIZE), None);
+        assert_eq!(restore_saved((300, 5000), &monitors, READING_SIZE), None);
+    }
+
+    #[test]
+    fn saved_spot_on_a_second_monitor_is_found() {
+        let monitors = [mon(0, 25, 1440, 875, 1.0), mon(1440, 0, 1920, 1080, 1.0)];
+        assert_eq!(restore_saved((1600, 100), &monitors, READING_SIZE), Some((1600, 100, 300, 60)));
+    }
+
+    #[test]
+    fn restored_pill_is_pulled_inside_the_work_area() {
+        // Top-left is on screen but the pill would hang off the right/bottom edge.
+        let monitors = [mon(0, 25, 1440, 875, 1.0)];
+        assert_eq!(restore_saved((1430, 895), &monitors, READING_SIZE), Some((1140, 840, 300, 60)));
+    }
+
+    #[test]
+    fn drag_off_every_monitor_is_not_saved() {
+        let monitors = [mon(0, 25, 1440, 875, 1.0)];
+        assert_eq!(to_saved_point((-50, -50), &monitors), None);
     }
 
     #[test]
