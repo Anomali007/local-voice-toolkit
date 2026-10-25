@@ -33,6 +33,22 @@ pub fn get_or_load_cached(model_path: &str) -> Result<Arc<WhisperEngine>> {
     Ok(engine)
 }
 
+/// Whisper writes non-speech as bracketed tags ("[BLANK_AUDIO]", "(music)");
+/// they must never reach a paste.
+pub fn strip_non_speech(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut depth = 0i32;
+    for c in text.chars() {
+        match c {
+            '[' | '(' => depth += 1,
+            ']' | ')' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub struct WhisperEngine {
     ctx: WhisperContext,
     model_path: String,
@@ -63,6 +79,10 @@ impl WhisperEngine {
         params.set_print_timestamps(false);
         params.set_suppress_blank(true);
         params.set_single_segment(false);
+        let dictionary = crate::dictionary::load();
+        if let Some(prompt) = crate::dictionary::vocabulary_prompt(&dictionary) {
+            params.set_initial_prompt(&prompt.replace('\0', ""));
+        }
 
         let mut state = self
             .ctx
@@ -85,7 +105,7 @@ impl WhisperEngine {
             text.push_str(&segment);
         }
 
-        Ok(text.trim().to_string())
+        Ok(crate::engines::postprocess::finalize_with(&text, &dictionary))
     }
 
     /// Transcribe audio with a callback fired as each segment is decoded.
@@ -103,6 +123,10 @@ impl WhisperEngine {
         params.set_print_timestamps(false);
         params.set_suppress_blank(true);
         params.set_single_segment(false);
+        let dictionary = crate::dictionary::load();
+        if let Some(prompt) = crate::dictionary::vocabulary_prompt(&dictionary) {
+            params.set_initial_prompt(&prompt.replace('\0', ""));
+        }
         params.set_segment_callback_safe_lossy(on_segment);
 
         let mut state = self
@@ -126,7 +150,7 @@ impl WhisperEngine {
             text.push_str(&segment);
         }
 
-        Ok(text.trim().to_string())
+        Ok(crate::engines::postprocess::finalize_with(&text, &dictionary))
     }
 }
 
@@ -144,6 +168,35 @@ impl SpeechToText for WhisperEngine {
             name: self.model_path.clone(),
             size_bytes: size,
             loaded: true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod real_models {
+    use super::*;
+
+    /// `cargo test --release --lib whisper_real -- --ignored --nocapture`
+    /// Times each downloaded model on a known WAV (WHISPER_WAV, any rate).
+    #[test]
+    #[ignore]
+    fn whisper_real_benchmark() {
+        let wav = std::env::var("WHISPER_WAV").expect("set WHISPER_WAV");
+        let (samples, rate) = crate::audio::processing::read_wav(std::path::Path::new(&wav)).unwrap();
+        let audio = crate::audio::capture::convert_rate(&samples, rate, 16_000);
+        let dir = dirs::data_dir().unwrap().join("com.blahcubed.app/models/stt");
+        for model in ["ggml-base.en.bin", "ggml-small.en.bin"] {
+            let path = dir.join(model);
+            if !path.exists() {
+                continue;
+            }
+            let t0 = std::time::Instant::now();
+            let engine = WhisperEngine::new(&path.to_string_lossy()).unwrap();
+            let load = t0.elapsed();
+            let _ = engine.transcribe(&audio).unwrap(); // warm-up
+            let t1 = std::time::Instant::now();
+            let text = engine.transcribe(&audio).unwrap();
+            println!("{model}: load {load:?}, transcribe {:?} for {:.1}s audio -> {text}", t1.elapsed(), audio.len() as f32 / 16_000.0);
         }
     }
 }

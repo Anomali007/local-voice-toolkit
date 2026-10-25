@@ -31,6 +31,7 @@ export interface AppSettings {
   stt_model: string;
   tts_voice: string;
   tts_speed: number;
+  tts_engine: "kokoro" | "phonon";
   auto_paste: boolean;
   launch_at_login: boolean;
   menu_bar_mode: boolean;
@@ -69,10 +70,10 @@ export const stt = {
 
 // TTS Commands
 export const tts = {
-  speak: (text: string, voiceId: string, speed: number, modelPath: string) =>
-    invoke("speak_text", { text, voiceId, speed, modelPath }),
+  speak: (text: string, voiceId: string, speed: number, engine?: "kokoro" | "phonon") =>
+    invoke("speak_text", { text, voiceId, speed, engine }),
   stop: () => invoke("stop_speaking"),
-  getVoices: () => invoke<VoiceInfo[]>("get_voices"),
+  getVoices: (engine?: "kokoro" | "phonon") => invoke<VoiceInfo[]>("get_voices", { engine }),
 };
 
 // Model Commands

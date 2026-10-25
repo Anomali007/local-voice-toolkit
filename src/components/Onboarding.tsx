@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import { AccessibilityIcon, CheckIcon, LockIcon, MicIcon, SpeakerIcon } from "./ui";
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -23,6 +25,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [downloading, setDownloading] = useState<Set<string>>(new Set());
   const [modelsReady, setModelsReady] = useState(false);
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
 
   // Load models on mount
   useEffect(() => {
@@ -67,14 +70,22 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     }
   };
 
-  const downloadModel = async (modelId: string) => {
+  const downloadModel = async (modelId: string): Promise<boolean> => {
     try {
+      setDownloadErrors((prev) => {
+        const next = { ...prev };
+        delete next[modelId];
+        return next;
+      });
       setDownloading((prev) => new Set(prev).add(modelId));
       setDownloadProgress((prev) => ({ ...prev, [modelId]: 0 }));
       await invoke("download_model", { modelId });
       await loadModels();
+      return true;
     } catch (err) {
       console.error("Failed to download model:", err);
+      setDownloadErrors((prev) => ({ ...prev, [modelId]: `Download failed: ${String(err)}` }));
+      return false;
     } finally {
       setDownloading((prev) => {
         const next = new Set(prev);
@@ -86,9 +97,10 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
 
   const downloadRecommendedModels = async () => {
     // Download in sequence: STT first, then TTS
-    await downloadModel("ggml-base.en.bin");
-    await downloadModel("kokoro-v1.0.onnx");
-    await downloadModel("voices-v1.0.bin");
+    // Stop at the first failure so the error stays attached to the right item.
+    for (const id of ["ggml-base.en.bin", "kokoro-v1.0.onnx", "voices-v1.0.bin"]) {
+      if (!(await downloadModel(id))) return;
+    }
   };
 
   const handleComplete = async () => {
@@ -133,7 +145,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900 z-50 flex items-center justify-center p-8">
+    <div className="fixed inset-0 bg-canvas z-50 flex items-center justify-center p-8 overflow-y-auto">
       <div className="w-full max-w-lg">
         {/* Progress dots */}
         <div className="flex justify-center gap-2 mb-8">
@@ -141,14 +153,14 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
             <div
               key={s}
               className={`w-2 h-2 rounded-full transition-colors ${
-                s === step ? "bg-sky-500" : i < ["welcome", "permissions", "models", "hotkeys", "complete"].indexOf(step) ? "bg-sky-500/50" : "bg-slate-700"
+                s === step ? "bg-accent" : i < ["welcome", "permissions", "models", "hotkeys", "complete"].indexOf(step) ? "bg-accent/50" : "bg-sunken"
               }`}
             />
           ))}
         </div>
 
         {/* Step content */}
-        <div className="bg-slate-800 rounded-2xl p-8 shadow-2xl">
+        <div className="bg-surface rounded-2xl p-8 shadow-pop">
           {step === "welcome" && (
             <WelcomeStep onNext={nextStep} />
           )}
@@ -161,6 +173,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
           )}
           {step === "models" && (
             <ModelsStep
+              downloadErrors={downloadErrors}
               models={models}
               downloadProgress={downloadProgress}
               downloading={downloading}
@@ -185,24 +198,24 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
 function WelcomeStep({ onNext }: { onNext: () => void }) {
   return (
     <div className="text-center">
-      <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-sky-400 to-indigo-500 rounded-2xl flex items-center justify-center">
-        <span className="text-4xl">B³</span>
+      <div className="w-20 h-20 mx-auto mb-6 bg-brand rounded-2xl shadow-lg flex items-center justify-center">
+        <span className="text-3xl font-semibold tracking-tight">B³</span>
       </div>
-      <h1 className="text-2xl font-bold text-white mb-2">Welcome to Blah³</h1>
-      <p className="text-slate-400 mb-8">
+      <h1 className="text-2xl font-bold text-fg mb-2">Welcome to Blah³</h1>
+      <p className="text-muted mb-8">
         Your local voice toolkit for macOS. Speech-to-text and text-to-speech,
         powered by AI — running 100% offline on your Mac.
       </p>
 
       <div className="space-y-3 text-left mb-8">
-        <Feature icon="🎤" title="Dictation Mode" description="Press a hotkey, speak, and text appears wherever your cursor is" />
-        <Feature icon="📖" title="Screen Reader" description="Select any text and hear it read aloud with natural AI voices" />
-        <Feature icon="🔒" title="100% Offline" description="All processing happens locally — your voice never leaves your Mac" />
+        <Feature icon={<MicIcon className="h-5 w-5" />} title="Dictation Mode" description="Press a hotkey, speak, and text appears wherever your cursor is" />
+        <Feature icon={<SpeakerIcon className="h-5 w-5" />} title="Screen Reader" description="Select any text and hear it read aloud with natural AI voices" />
+        <Feature icon={<LockIcon className="h-5 w-5" />} title="100% Offline" description="All processing happens locally — your voice never leaves your Mac" />
       </div>
 
       <button
         onClick={onNext}
-        className="w-full py-3 bg-sky-500 hover:bg-sky-600 text-white font-medium rounded-lg transition-colors"
+        className="btn-primary btn-lg w-full"
       >
         Get Started
       </button>
@@ -210,13 +223,13 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
   );
 }
 
-function Feature({ icon, title, description }: { icon: string; title: string; description: string }) {
+function Feature({ icon, title, description }: { icon: ReactNode; title: string; description: string }) {
   return (
     <div className="flex gap-3">
-      <span className="text-xl">{icon}</span>
+      <span className="mt-0.5 text-accent">{icon}</span>
       <div>
-        <h3 className="text-sm font-medium text-white">{title}</h3>
-        <p className="text-xs text-slate-400">{description}</p>
+        <h3 className="text-sm font-medium text-fg">{title}</h3>
+        <p className="text-xs text-muted">{description}</p>
       </div>
     </div>
   );
@@ -235,14 +248,14 @@ function PermissionsStep({
 
   return (
     <div>
-      <h2 className="text-xl font-bold text-white mb-2">Permissions Required</h2>
-      <p className="text-slate-400 text-sm mb-6">
+      <h2 className="text-xl font-bold text-fg mb-2">Permissions Required</h2>
+      <p className="text-muted text-sm mb-6">
         Blah³ needs two permissions to work properly. Click each button and approve the system dialog.
       </p>
 
       <div className="space-y-4 mb-8">
         <PermissionCard
-          icon="🎤"
+          icon={<MicIcon className="h-5 w-5" />}
           title="Microphone Access"
           description="Required for speech-to-text dictation"
           buttonText="Grant Microphone Access"
@@ -259,7 +272,7 @@ function PermissionsStep({
           }}
         />
         <PermissionCard
-          icon="♿"
+          icon={<AccessibilityIcon className="h-5 w-5" />}
           title="Accessibility Access"
           description="Required to read selected text and paste transcriptions"
           buttonText="Grant Accessibility Access"
@@ -275,20 +288,20 @@ function PermissionsStep({
         />
       </div>
 
-      <p className="text-xs text-slate-500 mb-6 text-center">
+      <p className="text-xs text-subtle mb-6 text-center">
         After granting permissions, you may need to restart Blah³ for changes to take effect.
       </p>
 
       <div className="flex gap-3">
         <button
           onClick={onBack}
-          className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors"
+          className="btn-secondary btn-lg flex-1"
         >
           Back
         </button>
         <button
           onClick={onNext}
-          className="flex-1 py-3 bg-sky-500 hover:bg-sky-600 text-white font-medium rounded-lg transition-colors"
+          className="btn-primary btn-lg flex-1"
         >
           Continue
         </button>
@@ -305,7 +318,7 @@ function PermissionCard({
   granted,
   onClick,
 }: {
-  icon: string;
+  icon: ReactNode;
   title: string;
   description: string;
   buttonText: string;
@@ -313,25 +326,25 @@ function PermissionCard({
   onClick: () => void;
 }) {
   return (
-    <div className={`bg-slate-700/50 rounded-lg p-4 border ${
-      granted === true ? "border-green-500/30" : granted === false ? "border-red-500/30" : "border-transparent"
+    <div className={`bg-sunken rounded-lg p-4 border ${
+      granted === true ? "border-ok/40" : granted === false ? "border-danger/40" : "border-transparent"
     }`}>
       <div className="flex items-start gap-3">
-        <span className="text-2xl">{icon}</span>
+        <span className="mt-0.5 text-accent">{icon}</span>
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="font-medium text-white">{title}</h3>
+            <h3 className="font-medium text-fg">{title}</h3>
             {granted !== undefined && (
-              <span className={`text-xs ${granted ? "text-green-400" : "text-red-400"}`}>
+              <span className={`text-xs ${granted ? "text-ok" : "text-danger"}`}>
                 {granted ? "Granted" : "Not Granted"}
               </span>
             )}
           </div>
-          <p className="text-xs text-slate-400 mt-1">{description}</p>
+          <p className="text-xs text-muted mt-1">{description}</p>
           {!granted && (
             <button
               onClick={onClick}
-              className="mt-3 px-3 py-1.5 text-xs bg-slate-600 hover:bg-slate-500 text-white rounded transition-colors"
+              className="btn-secondary mt-3"
             >
               {buttonText}
             </button>
@@ -343,6 +356,7 @@ function PermissionCard({
 }
 
 function ModelsStep({
+  downloadErrors,
   models,
   downloadProgress,
   downloading,
@@ -351,6 +365,7 @@ function ModelsStep({
   onNext,
   onBack,
 }: {
+  downloadErrors: Record<string, string>;
   models: Model[];
   downloadProgress: Record<string, number>;
   downloading: Set<string>;
@@ -376,8 +391,8 @@ function ModelsStep({
 
   return (
     <div>
-      <h2 className="text-xl font-bold text-white mb-2">Download AI Models</h2>
-      <p className="text-slate-400 text-sm mb-6">
+      <h2 className="text-xl font-bold text-fg mb-2">Download AI Models</h2>
+      <p className="text-muted text-sm mb-6">
         Blah³ uses local AI models for speech recognition and synthesis.
         We recommend starting with these models:
       </p>
@@ -390,6 +405,7 @@ function ModelsStep({
           status={sttModel?.status}
           progress={downloadProgress["ggml-base.en.bin"]}
           isDownloading={downloading.has("ggml-base.en.bin")}
+          error={downloadErrors["ggml-base.en.bin"]}
         />
         <ModelItem
           name="Kokoro 82M"
@@ -398,6 +414,7 @@ function ModelsStep({
           status={ttsModel1?.status}
           progress={downloadProgress["kokoro-v1.0.onnx"]}
           isDownloading={downloading.has("kokoro-v1.0.onnx")}
+          error={downloadErrors["kokoro-v1.0.onnx"]}
         />
         <ModelItem
           name="Kokoro Voice Styles"
@@ -406,6 +423,7 @@ function ModelsStep({
           status={ttsModel2?.status}
           progress={downloadProgress["voices-v1.0.bin"]}
           isDownloading={downloading.has("voices-v1.0.bin")}
+          error={downloadErrors["voices-v1.0.bin"]}
         />
       </div>
 
@@ -413,30 +431,30 @@ function ModelsStep({
         <button
           onClick={handleDownload}
           disabled={isDownloading}
-          className="w-full py-3 mb-4 bg-sky-500 hover:bg-sky-600 disabled:bg-slate-600 text-white font-medium rounded-lg transition-colors"
+          className="btn-primary btn-lg w-full mb-4"
         >
-          Download All ({totalSize})
+          {Object.keys(downloadErrors).length > 0 ? "Retry download" : "Download All"} ({totalSize})
         </button>
       )}
 
       {modelsReady && (
-        <div className="flex items-center justify-center gap-2 mb-4 py-3 bg-green-500/10 rounded-lg">
-          <span className="text-green-400">✓</span>
-          <span className="text-green-400 font-medium">All models ready!</span>
+        <div className="btn-primary btn-lg mb-4">
+          <CheckIcon className="h-4 w-4 text-ok" />
+          <span className="text-ok font-medium">All models ready!</span>
         </div>
       )}
 
       <div className="flex gap-3">
         <button
           onClick={onBack}
-          className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors"
+          className="btn-secondary btn-lg flex-1"
         >
           Back
         </button>
         <button
           onClick={onNext}
           disabled={!modelsReady}
-          className="flex-1 py-3 bg-sky-500 hover:bg-sky-600 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+          className="btn-primary btn-lg flex-1"
         >
           {modelsReady ? "Continue" : "Download models first"}
         </button>
@@ -452,7 +470,9 @@ function ModelItem({
   status,
   progress,
   isDownloading,
+  error,
 }: {
+  error?: string;
   name: string;
   size: string;
   description: string;
@@ -463,29 +483,34 @@ function ModelItem({
   const isDownloaded = status === "downloaded";
 
   return (
-    <div className="bg-slate-700/50 rounded-lg p-3">
+    <div className="bg-sunken rounded-lg p-3">
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-medium text-white">{name}</h3>
+            <h3 className="text-sm font-medium text-fg">{name}</h3>
             {isDownloaded && (
-              <span className="text-green-400 text-xs">✓</span>
+              <CheckIcon className="h-3.5 w-3.5 text-ok" />
             )}
           </div>
-          <p className="text-xs text-slate-400">{description}</p>
+          <p className="text-xs text-muted">{description}</p>
         </div>
-        <span className="text-xs text-slate-500">{size}</span>
+        <span className="text-xs text-subtle">{size}</span>
       </div>
       {isDownloading && (
         <div className="mt-2">
-          <div className="h-1.5 bg-slate-600 rounded-full overflow-hidden">
+          <div className="h-1.5 bg-line rounded-full overflow-hidden">
             <div
-              className="h-full bg-sky-500 transition-all duration-300"
+              className="h-full bg-brand transition-all duration-300"
               style={{ width: `${progress || 0}%` }}
             />
           </div>
-          <p className="text-xs text-slate-400 mt-1">{progress || 0}%</p>
+          <p className="text-xs text-muted mt-1">{progress || 0}%</p>
         </div>
+      )}
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-danger break-words">
+          {error}
+        </p>
       )}
     </div>
   );
@@ -494,8 +519,8 @@ function ModelItem({
 function HotkeysStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   return (
     <div>
-      <h2 className="text-xl font-bold text-white mb-2">Keyboard Shortcuts</h2>
-      <p className="text-slate-400 text-sm mb-6">
+      <h2 className="text-xl font-bold text-fg mb-2">Keyboard Shortcuts</h2>
+      <p className="text-muted text-sm mb-6">
         Use these hotkeys from anywhere on your Mac:
       </p>
 
@@ -512,20 +537,20 @@ function HotkeysStep({ onNext, onBack }: { onNext: () => void; onBack: () => voi
         />
       </div>
 
-      <p className="text-xs text-slate-500 mb-6 text-center">
+      <p className="text-xs text-subtle mb-6 text-center">
         You can customize these shortcuts in Settings.
       </p>
 
       <div className="flex gap-3">
         <button
           onClick={onBack}
-          className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors"
+          className="btn-secondary btn-lg flex-1"
         >
           Back
         </button>
         <button
           onClick={onNext}
-          className="flex-1 py-3 bg-sky-500 hover:bg-sky-600 text-white font-medium rounded-lg transition-colors"
+          className="btn-primary btn-lg flex-1"
         >
           Continue
         </button>
@@ -544,21 +569,21 @@ function HotkeyCard({
   description: string;
 }) {
   return (
-    <div className="bg-slate-700/50 rounded-lg p-4">
+    <div className="bg-sunken rounded-lg p-4">
       <div className="flex items-center gap-4">
         <div className="flex gap-1">
           {keys.map((key, i) => (
             <span key={i}>
-              <kbd className="px-2 py-1 bg-slate-600 rounded text-white text-sm font-mono">
+              <kbd className="kbd">
                 {key}
               </kbd>
-              {i < keys.length - 1 && <span className="text-slate-500 mx-0.5">+</span>}
+              {i < keys.length - 1 && <span className="text-subtle mx-0.5">+</span>}
             </span>
           ))}
         </div>
         <div>
-          <h3 className="font-medium text-white">{title}</h3>
-          <p className="text-xs text-slate-400">{description}</p>
+          <h3 className="font-medium text-fg">{title}</h3>
+          <p className="text-xs text-muted">{description}</p>
         </div>
       </div>
     </div>
@@ -568,17 +593,17 @@ function HotkeyCard({
 function CompleteStep({ onComplete, onBack }: { onComplete: () => void; onBack: () => void }) {
   return (
     <div className="text-center">
-      <div className="w-20 h-20 mx-auto mb-6 bg-green-500/20 rounded-full flex items-center justify-center">
-        <span className="text-4xl">✓</span>
+      <div className="w-20 h-20 mx-auto mb-6 bg-ok/15 rounded-full flex items-center justify-center">
+        <CheckIcon className="h-9 w-9 text-ok" />
       </div>
-      <h2 className="text-2xl font-bold text-white mb-2">You're All Set!</h2>
-      <p className="text-slate-400 mb-8">
-        Blah³ is ready to use. Try pressing <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300 text-sm">⌘</kbd> + <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300 text-sm">⇧</kbd> + <kbd className="px-1.5 py-0.5 bg-slate-700 rounded text-slate-300 text-sm">D</kbd> to dictate!
+      <h2 className="text-2xl font-bold text-fg mb-2">You're All Set!</h2>
+      <p className="text-muted mb-8">
+        Blah³ is ready to use. Tap the <kbd className="kbd">Right ⌥</kbd> key to dictate!
       </p>
 
-      <div className="bg-slate-700/50 rounded-lg p-4 mb-8 text-left">
-        <h3 className="text-sm font-medium text-white mb-2">Quick Tips:</h3>
-        <ul className="text-xs text-slate-400 space-y-1">
+      <div className="bg-sunken rounded-lg p-4 mb-8 text-left">
+        <h3 className="text-sm font-medium text-fg mb-2">Quick Tips:</h3>
+        <ul className="text-xs text-muted space-y-1">
           <li>• The app runs in your menu bar — look for the icon up top</li>
           <li>• Silence detection will auto-stop recording when you pause</li>
           <li>• Download more models in the Models tab for better accuracy</li>
@@ -588,13 +613,13 @@ function CompleteStep({ onComplete, onBack }: { onComplete: () => void; onBack: 
       <div className="flex gap-3">
         <button
           onClick={onBack}
-          className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors"
+          className="btn-secondary btn-lg flex-1"
         >
           Back
         </button>
         <button
           onClick={onComplete}
-          className="flex-1 py-3 bg-green-500 hover:bg-green-600 text-white font-medium rounded-lg transition-colors"
+          className="btn-primary btn-lg flex-1"
         >
           Start Using Blah³
         </button>

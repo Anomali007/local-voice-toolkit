@@ -197,15 +197,62 @@ pub async fn transcribe_audio(
         return Err("No audio captured. Please check your microphone input device.".to_string());
     }
 
+    // The path comes from the webview: only load models from our own folder.
+    let model_path = resolve_stt_model_path(&model_path)?;
+
     let start = std::time::Instant::now();
 
-    let engine = crate::engines::whisper::get_or_load_cached(&model_path)
-        .map_err(|e| format!("Failed to load Whisper model '{}': {}", model_path, e))?;
-    let text = engine.transcribe(&audio_data)
-        .map_err(|e| format!("Transcription failed: {}", e))?;
+    let text = crate::engines::stt::transcribe(&model_path, &audio_data)
+        .map_err(|e| format!("Transcription failed ('{}'): {}", model_path, e))?;
 
     let duration_ms = start.elapsed().as_millis() as u64;
-    tracing::info!("Transcription completed in {}ms: {}", duration_ms, text);
+    tracing::info!("Transcription completed in {}ms: {} chars", duration_ms, text.chars().count());
 
     Ok(TranscriptionResult { text, duration_ms })
+}
+
+/// Accept a model path only if it resolves inside the app's STT models folder.
+fn resolve_stt_model_path(requested: &str) -> Result<String, String> {
+    let dir = dirs::data_dir()
+        .ok_or("Could not find application data directory")?
+        .join("com.blahcubed.app")
+        .join("models")
+        .join("stt");
+    check_inside(&dir, std::path::Path::new(requested))
+}
+
+fn check_inside(dir: &std::path::Path, requested: &std::path::Path) -> Result<String, String> {
+    let dir = dir.canonicalize().map_err(|_| "Speech models folder not found".to_string())?;
+    let path = requested.canonicalize().map_err(|_| "Speech model not found. Download it from the Models tab.".to_string())?;
+    // Whisper models are single files; Parakeet is a directory.
+    if path.starts_with(&dir) && (path.is_file() || crate::engines::stt::is_parakeet(&path.to_string_lossy())) {
+        Ok(path.to_string_lossy().to_string())
+    } else {
+        Err("That speech model is outside Blah³'s models folder".into())
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::check_inside;
+
+    #[test]
+    fn model_path_must_stay_in_models_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let models = root.path().join("stt");
+        std::fs::create_dir_all(&models).unwrap();
+        std::fs::write(models.join("ggml-base.en.bin"), b"x").unwrap();
+        std::fs::write(root.path().join("secret.bin"), b"x").unwrap();
+
+        assert!(check_inside(&models, &models.join("ggml-base.en.bin")).is_ok());
+        assert!(check_inside(&models, &models.join("../secret.bin")).is_err());
+        assert!(check_inside(&models, &root.path().join("secret.bin")).is_err());
+        assert!(check_inside(&models, &models.join("missing.bin")).is_err());
+
+        // Parakeet is a directory inside the folder; other directories are not models.
+        std::fs::create_dir_all(models.join("parakeet-tdt-0.6b-v2")).unwrap();
+        std::fs::create_dir_all(models.join("somedir")).unwrap();
+        assert!(check_inside(&models, &models.join("parakeet-tdt-0.6b-v2")).is_ok());
+        assert!(check_inside(&models, &models.join("somedir")).is_err());
+    }
 }

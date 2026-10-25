@@ -62,9 +62,9 @@ describe('App', () => {
 
   it('shows Dictation panel by default', async () => {
     render(<App />);
-    // The Dictation tab should be active (has sky-400 color class)
+    // The Dictation tab should be the current page
     const dictationTab = (await screen.findByText('Dictation')).closest('button');
-    expect(dictationTab).toHaveClass('text-sky-400');
+    expect(dictationTab).toHaveAttribute('aria-current', 'page');
   });
 
   it('shows onboarding when not completed', async () => {
@@ -89,10 +89,10 @@ describe('App', () => {
 
     // Settings tab should now be active
     const settingsTab = screen.getByText('Settings').closest('button');
-    expect(settingsTab).toHaveClass('text-sky-400');
+    expect(settingsTab).toHaveAttribute('aria-current', 'page');
 
     // Dictation tab should no longer be active
     const dictationTab = screen.getByText('Dictation').closest('button');
-    expect(dictationTab).not.toHaveClass('text-sky-400');
+    expect(dictationTab).not.toHaveAttribute('aria-current');
   });
 });

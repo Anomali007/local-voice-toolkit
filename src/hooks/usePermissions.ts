@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 interface PermissionStatus {
   microphone: boolean;
   accessibility: boolean;
+  /** Absent until the backend reports it; treat a missing value as unknown. */
+  input_monitoring?: boolean;
 }
 
 export function usePermissions(pollIntervalMs = 2000) {

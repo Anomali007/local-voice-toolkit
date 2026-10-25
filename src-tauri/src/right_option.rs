@@ -167,6 +167,7 @@ fn run_event_tap() {
         if !crate::commands::permissions::accessibility_trusted() {
             crate::commands::permissions::prompt_accessibility_once();
         }
+        ensure_input_monitoring();
 
         let right_down = Cell::new(false);
         let restart = Rc::new(Cell::new(false));
@@ -221,6 +222,7 @@ fn run_event_tap() {
                     Ok(s) => s,
                     Err(_) => {
                         tracing::error!("Failed to create run loop source for right-Option tap");
+                        MONITOR_STARTED.store(false, Ordering::SeqCst);
                         return;
                     }
                 };
@@ -230,23 +232,64 @@ fn run_event_tap() {
                 }
                 tap.enable();
                 tracing::info!("Right-Option event tap running");
-                CFRunLoop::run_current();
-                // run_current returned: either the tap was disabled (restart)
-                // or the source went away. Fall through to the restart check.
+                loop {
+                    CFRunLoop::run_current();
+                    // The system disabled the tap (timeout, secure input):
+                    // re-enable this same tap rather than building a new one.
+                    if restart.replace(false) {
+                        tap.enable();
+                        tracing::info!("Right-Option event tap re-enabled");
+                        continue;
+                    }
+                    break;
+                }
+                // Detach before `tap` (and the callback it owns) is dropped.
+                // Leaving the source on the run loop let the system deliver
+                // events to a freed callback: a segfault on the next key press.
+                unsafe {
+                    run_loop.remove_source(&source, kCFRunLoopCommonModes);
+                }
             }
             Err(()) => {
                 tracing::error!(
-                    "Failed to create right-Option event tap (is Accessibility permission granted?) - retrying in 30s"
+                    "Failed to create right-Option event tap (are Accessibility and Input Monitoring granted?) - retrying in 3s"
                 );
-                std::thread::sleep(std::time::Duration::from_secs(30));
+                std::thread::sleep(std::time::Duration::from_secs(3));
                 continue;
             }
         }
 
-        if restart.get() {
-            continue;
-        }
         tracing::warn!("Right-Option event tap run loop exited");
+        // Let the next set_enabled() start a fresh monitor thread.
+        MONITOR_STARTED.store(false, Ordering::SeqCst);
         break;
+    }
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGPreflightListenEventAccess() -> bool;
+    fn CGRequestListenEventAccess() -> bool;
+}
+
+/// Whether this app may watch keyboard events system-wide.
+pub fn input_monitoring_granted() -> bool {
+    // SAFETY: plain CoreGraphics call without arguments.
+    unsafe { CGPreflightListenEventAccess() }
+}
+
+/// Watching keys system-wide needs Input Monitoring on current macOS; ask
+/// once (shows the system prompt / adds the app to the list).
+fn ensure_input_monitoring() {
+    static ASKED: AtomicBool = AtomicBool::new(false);
+    // SAFETY: plain CoreGraphics calls without arguments.
+    if unsafe { CGPreflightListenEventAccess() } {
+        return;
+    }
+    if !ASKED.swap(true, Ordering::SeqCst) {
+        tracing::warn!("Input Monitoring not granted - requesting it for the right-Option trigger");
+        unsafe {
+            CGRequestListenEventAccess();
+        }
     }
 }

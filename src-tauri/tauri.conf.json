@@ -10,17 +10,15 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "trayIcon": {
-      "iconPath": "icons/tray-icon.png",
-      "iconAsTemplate": true,
-      "tooltip": "Blah³"
-    },
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
         "title": "Blah³",
-        "width": 480,
-        "height": 640,
+        "width": 920,
+        "height": 680,
+        "minWidth": 640,
+        "minHeight": 480,
         "resizable": true,
         "decorations": true,
         "visible": true,
@@ -30,14 +28,15 @@
         "label": "dictation-overlay",
         "url": "overlay.html",
         "width": 400,
-        "height": 200,
+        "height": 230,
         "resizable": false,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
         "visible": false,
         "skipTaskbar": true,
-        "focus": false
+        "focus": false,
+        "acceptFirstMouse": true
       }
     ],
     "security": {

@@ -27,11 +27,13 @@ export default function WaveformViz({ isActive }: WaveformVizProps) {
       if (!ctx) return;
 
       const bars = 32;
-      const gap = 2;
+      const gap = 5;
       const barWidth = canvas.width / bars - gap;
       const history = historyRef.current;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const rec = getComputedStyle(document.documentElement).getPropertyValue("--c-rec").trim();
+      ctx.fillStyle = rec ? `rgb(${rec})` : "#e5392c";
       for (let i = 0; i < bars; i++) {
         // Normalize: typical speech RMS is 0..0.3
         const normalized = Math.min((history[i] || 0) / 0.15, 1.0);
@@ -40,8 +42,10 @@ export default function WaveformViz({ isActive }: WaveformVizProps) {
         const x = i * (barWidth + gap);
         const y = (canvas.height - height) / 2;
 
-        ctx.fillStyle = "#0ea5e9";
-        ctx.fillRect(x, y, barWidth, height);
+        ctx.beginPath();
+        if (typeof ctx.roundRect === "function") ctx.roundRect(x, y, barWidth, height, barWidth / 2);
+        else ctx.rect(x, y, barWidth, height);
+        ctx.fill();
       }
     };
 
@@ -67,8 +71,8 @@ export default function WaveformViz({ isActive }: WaveformVizProps) {
     <canvas
       ref={canvasRef}
       width={400}
-      height={60}
-      className="w-full h-16 rounded"
+      height={40}
+      className="h-full w-full"
     />
   );
 }

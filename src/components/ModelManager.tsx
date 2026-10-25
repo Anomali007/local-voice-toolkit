@@ -1,7 +1,19 @@
+import { useState } from "react";
 import { useModels } from "../hooks/useModels";
+import { PageHeader, Section } from "./ui";
 
 export default function ModelManager() {
-  const { models, downloadProgress, downloadModel, deleteModel, isDownloading } = useModels();
+  const {
+    models,
+    downloadProgress,
+    downloadModel,
+    deleteModel,
+    selectSttModel,
+    activeSttModel,
+    errors,
+    isDownloading,
+  } = useModels();
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
 
   // Separate CoreML acceleration models from regular models
   const sttModels = models.filter((m) => m.model_type === "stt" && !m.id.includes(".mlmodelc"));
@@ -10,71 +22,87 @@ export default function ModelManager() {
 
   return (
     <div className="space-y-6">
+      <PageHeader title="Speech models" lede="Everything runs on this Mac. Download a model once and it works offline." />
+
       {/* STT Models */}
-      <section>
-        <h2 className="text-lg font-semibold text-slate-200 mb-3">Speech-to-Text Models</h2>
-        <div className="space-y-2">
+      <Section title="Dictation models" note="Pick the model that transcribes your speech. Larger models are more accurate but slower.">
+        <div className="card card-list overflow-hidden">
           {sttModels.map((model) => (
             <ModelCard
               key={model.id}
               model={model}
               progress={downloadProgress[model.id]}
               onDownload={() => downloadModel(model.id)}
-              onDelete={() => deleteModel(model.id)}
+              onDelete={() => {
+                setConfirmingDelete(null);
+                deleteModel(model.id);
+              }}
               isDownloading={isDownloading(model.id)}
+              error={errors[model.id]}
+              confirming={confirmingDelete === model.id}
+              onRequestDelete={() => setConfirmingDelete(model.id)}
+              onCancelDelete={() => setConfirmingDelete(null)}
+              isActive={model.id === activeSttModel}
+              onUse={() => selectSttModel(model.id)}
+              selectable
             />
           ))}
         </div>
-      </section>
+      </Section>
 
       {/* CoreML Acceleration Models */}
       {coremlModels.length > 0 && (
-        <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-1">Apple Silicon Acceleration</h2>
-          <p className="text-xs text-slate-400 mb-3">
-            Optional CoreML encoders that use the Neural Engine for faster transcription on Apple Silicon Macs.
-            Download the encoder matching your Whisper model for best performance.
-          </p>
-          <div className="space-y-2">
+        <Section title="Apple Silicon acceleration" note="Optional encoders that use the Neural Engine for faster transcription. Download the one that matches your dictation model.">
+          <div className="card card-list overflow-hidden">
             {coremlModels.map((model) => (
               <ModelCard
                 key={model.id}
                 model={model}
                 progress={downloadProgress[model.id]}
                 onDownload={() => downloadModel(model.id)}
-                onDelete={() => deleteModel(model.id)}
+                onDelete={() => {
+                setConfirmingDelete(null);
+                deleteModel(model.id);
+              }}
                 isDownloading={isDownloading(model.id)}
+                error={errors[model.id]}
+                confirming={confirmingDelete === model.id}
+                onRequestDelete={() => setConfirmingDelete(model.id)}
+                onCancelDelete={() => setConfirmingDelete(null)}
                 isCoreML={true}
               />
             ))}
           </div>
-        </section>
+        </Section>
       )}
 
       {/* TTS Models */}
-      <section>
-        <h2 className="text-lg font-semibold text-slate-200 mb-3">Text-to-Speech Models</h2>
-        <div className="space-y-2">
+      <Section title="Reader voices">
+        <div className="card card-list overflow-hidden">
           {ttsModels.map((model) => (
             <ModelCard
               key={model.id}
               model={model}
               progress={downloadProgress[model.id]}
               onDownload={() => downloadModel(model.id)}
-              onDelete={() => deleteModel(model.id)}
+              onDelete={() => {
+                setConfirmingDelete(null);
+                deleteModel(model.id);
+              }}
               isDownloading={isDownloading(model.id)}
+              error={errors[model.id]}
+              confirming={confirmingDelete === model.id}
+              onRequestDelete={() => setConfirmingDelete(model.id)}
+              onCancelDelete={() => setConfirmingDelete(null)}
             />
           ))}
         </div>
-      </section>
+      </Section>
 
       {/* Storage Info */}
-      <div className="bg-slate-800/50 rounded-lg p-4">
-        <h3 className="text-sm font-medium text-slate-300 mb-2">Storage</h3>
-        <p className="text-xs text-slate-400">
-          Models are stored in ~/Library/Application Support/com.blahcubed.app/models/
-        </p>
-      </div>
+      <p className="selectable px-1 text-xs text-subtle">
+        Stored in ~/Library/Application Support/com.blahcubed.app/models/
+      </p>
     </div>
   );
 }
@@ -88,67 +116,109 @@ interface Model {
   status: string;
 }
 
+
 interface ModelCardProps {
   model: Model;
   progress?: number;
   onDownload: () => void;
   onDelete: () => void;
+  onRequestDelete: () => void;
+  onCancelDelete: () => void;
+  confirming: boolean;
+  error?: string;
   isDownloading: boolean;
   isCoreML?: boolean;
+  /** STT model that can be chosen for dictation */
+  selectable?: boolean;
+  isActive?: boolean;
+  onUse?: () => void;
 }
 
-function ModelCard({ model, progress, onDownload, onDelete, isDownloading, isCoreML }: ModelCardProps) {
+function ModelCard({
+  model,
+  progress,
+  onDownload,
+  onDelete,
+  onRequestDelete,
+  onCancelDelete,
+  confirming,
+  error,
+  isDownloading,
+  isCoreML,
+  selectable,
+  isActive,
+  onUse,
+}: ModelCardProps) {
   const isDownloaded = model.status === "downloaded";
 
   return (
-    <div className={`rounded-lg p-4 ${isCoreML ? "bg-purple-900/20 border border-purple-800/30" : "bg-slate-800"}`}>
-      <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <div className="flex items-center space-x-2">
-            <h3 className="font-medium text-slate-100">{model.name}</h3>
-            {isCoreML && (
-              <span className="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded-full">
-                Neural Engine
-              </span>
-            )}
-            {isDownloaded && (
-              <span className="px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded-full">
-                Downloaded
-              </span>
-            )}
+    <div className={`px-4 py-3.5 ${isActive ? "bg-accent/[0.07]" : ""}`}>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 className="text-[13px] font-semibold">{model.name}</h3>
+            {isCoreML && <span className="badge-neutral">Neural Engine</span>}
+            {isDownloaded && !isActive && <span className="badge-ok">Downloaded</span>}
+            {isActive && <span className="badge-accent">Active</span>}
           </div>
-          <p className="text-sm text-slate-400 mt-1">{model.description}</p>
-          <p className="text-xs text-slate-500 mt-1">{model.size_display}</p>
+          <p className="mt-0.5 text-xs text-muted">{model.description}</p>
+          <p className="mt-0.5 text-xs text-subtle">{model.size_display}</p>
         </div>
 
-        <div className="ml-4">
+        <div className="flex shrink-0 items-center gap-2">
           {isDownloading ? (
-            <div className="w-20">
-              <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-sky-500 transition-all"
-                  style={{ width: `${progress || 0}%` }}
-                />
+            <div className="flex w-28 items-center gap-2" role="progressbar" aria-valuenow={progress || 0} aria-valuemin={0} aria-valuemax={100} aria-label={`Downloading ${model.name}`}>
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+                <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${progress || 0}%` }} />
               </div>
-              <p className="text-xs text-slate-400 text-center mt-1">{progress || 0}%</p>
+              <span className="w-8 text-right text-xs tabular-nums text-muted">{progress || 0}%</span>
             </div>
           ) : isDownloaded ? (
-            <button
-              onClick={onDelete}
-              className="px-3 py-1.5 text-sm bg-red-500/10 text-red-400 rounded hover:bg-red-500/20 transition-colors"
-            >
-              Delete
-            </button>
+            <>
+              {selectable && !isActive && (
+                <button onClick={onUse} className="btn-primary">
+                  Use this model
+                </button>
+              )}
+              {!confirming && (
+                <button onClick={onRequestDelete} className="btn-danger">
+                  Delete
+                </button>
+              )}
+            </>
           ) : (
-            <button
-              onClick={onDownload}
-              className="px-3 py-1.5 text-sm bg-sky-500 text-white rounded hover:bg-sky-600 transition-colors"
-            >
-              Download
+            <button onClick={onDownload} className="btn-primary">
+              {error ? "Retry" : "Download"}
             </button>
           )}
         </div>
       </div>
+
+      {confirming && isDownloaded && (
+        <div role="alertdialog" aria-label={`Delete ${model.name}`} className="mt-3 rounded-lg bg-sunken p-3">
+          <p className="text-[13px]">Delete {model.name}? You can download it again later.</p>
+          {isActive && (
+            <p className="mt-1 text-xs text-warn">
+              This is your active dictation model. Dictation will fail until you download it again or
+              choose another model.
+            </p>
+          )}
+          <div className="mt-2 flex gap-2">
+            <button onClick={onDelete} className="btn-danger-solid">
+              Confirm delete
+            </button>
+            <button onClick={onCancelDelete} className="btn-secondary">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <p role="alert" className="mt-2 break-words text-xs text-danger">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

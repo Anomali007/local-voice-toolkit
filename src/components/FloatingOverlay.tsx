@@ -82,7 +82,7 @@ export default function FloatingOverlay({ mode, onStop, silenceProgress = 0 }: F
     switch (mode) {
       case "recording":
         return {
-          bgColor: "bg-red-500",
+          bgColor: "bg-[#de362c]",
           pulseColor: "bg-red-400",
           icon: <MicIcon className="w-5 h-5" />,
           label: "Recording",
@@ -90,7 +90,7 @@ export default function FloatingOverlay({ mode, onStop, silenceProgress = 0 }: F
         };
       case "transcribing":
         return {
-          bgColor: "bg-amber-500",
+          bgColor: "bg-[#b86e00]",
           pulseColor: "bg-amber-400",
           icon: <SpinnerIcon className="w-5 h-5 animate-spin" />,
           label: "Transcribing",
@@ -98,7 +98,7 @@ export default function FloatingOverlay({ mode, onStop, silenceProgress = 0 }: F
         };
       case "speaking":
         return {
-          bgColor: "bg-sky-500",
+          bgColor: "bg-[#5452d6]",
           pulseColor: "bg-sky-400",
           icon: <SpeakerIcon className="w-5 h-5" />,
           label: "Speaking",
@@ -126,7 +126,7 @@ export default function FloatingOverlay({ mode, onStop, silenceProgress = 0 }: F
       <div className="relative">
         {/* Pulse ring for recording */}
         {mode === "recording" && (
-          <div className="absolute inset-0 rounded-full animate-ping opacity-30 bg-red-500" />
+          <div className="absolute inset-0 rounded-full animate-ping opacity-30 bg-[#de362c]" />
         )}
 
         {/* Main pill */}
@@ -215,9 +215,9 @@ export function CompactOverlay({ mode, onStop }: { mode: OverlayMode; onStop: ()
   };
 
   const config = {
-    recording: { bg: "bg-red-500", icon: "🎤", label: "Recording" },
-    transcribing: { bg: "bg-amber-500", icon: "⏳", label: "Transcribing" },
-    speaking: { bg: "bg-sky-500", icon: "🔊", label: "Speaking" },
+    recording: { bg: "bg-[#de362c]", icon: <MicIcon className="h-3.5 w-3.5" />, label: "Recording" },
+    transcribing: { bg: "bg-[#b86e00]", icon: <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />, label: "Transcribing" },
+    speaking: { bg: "bg-[#5452d6]", icon: <SpeakerIcon className="h-3.5 w-3.5" />, label: "Speaking" },
   }[mode];
 
   return (

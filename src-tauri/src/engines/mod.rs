@@ -1,7 +1,12 @@
 #![allow(dead_code)]
 
 pub mod whisper;
+pub mod parakeet;
+pub mod stt;
 pub mod kokoro;
+pub mod phonon;
+pub mod postprocess;
+pub mod text;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

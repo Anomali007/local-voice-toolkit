@@ -7,8 +7,15 @@ use std::path::{Path, PathBuf};
 use super::{AudioBuffer, ModelInfo, TextToSpeech, VoiceInfo};
 
 const SAMPLE_RATE: u32 = 24000;
-const MIN_SPEED: f32 = 0.25;
-const MAX_SPEED: f32 = 5.0;
+
+/// Smallest plausible size for each model file. A failed download used to
+/// leave a 15-byte "Entry not found" page that passed an exists() check.
+const MIN_MODEL_BYTES: u64 = 100_000_000;
+const MIN_VOICES_BYTES: u64 = 1_000_000;
+
+fn is_complete(path: &Path, min_bytes: u64) -> bool {
+    std::fs::metadata(path).map(|m| m.len() >= min_bytes).unwrap_or(false)
+}
 
 pub struct KokoroEngine {
     tts: TtsEngine,
@@ -21,15 +28,7 @@ impl KokoroEngine {
         let voices_path = model_dir.join("voices-v1.0.bin");
 
         // Validate required files exist
-        let mut missing = Vec::new();
-        if !model_path.exists() {
-            missing.push("kokoro-v1.0.onnx");
-        }
-        if !voices_path.exists() {
-            missing.push("voices-v1.0.bin");
-        }
-
-        if !missing.is_empty() {
+        if let Err(missing) = validate_model_files(&model_dir) {
             return Err(anyhow!(
                 "Missing TTS files: {}. Please download from Models tab.",
                 missing.join(", ")
@@ -50,36 +49,17 @@ impl KokoroEngine {
         Ok(Self { tts, model_dir })
     }
 
-    pub fn synthesize(&mut self, text: &str, voice_id: &str, speed: f32) -> Result<AudioBuffer> {
-        // Clamp speed to safe range
-        let clamped_speed = speed.clamp(MIN_SPEED, MAX_SPEED);
-
-        if (speed - clamped_speed).abs() > f32::EPSILON {
-            tracing::warn!(
-                "Speed {} clamped to {} (valid range: {}-{})",
-                speed,
-                clamped_speed,
-                MIN_SPEED,
-                MAX_SPEED
-            );
-        }
-
-        tracing::debug!(
-            "Synthesizing text with voice '{}' at speed {}",
-            voice_id,
-            clamped_speed
-        );
+    /// Synthesize at the model's native rate. Speed is applied afterwards by
+    /// `audio::stretch`, which keeps pitch (changing the playback rate did not).
+    pub fn synthesize(&mut self, text: &str, voice_id: &str) -> Result<AudioBuffer> {
+        tracing::debug!("Synthesizing text with voice '{}'", voice_id);
 
         let samples = self
             .tts
             .synthesize(text, Some(voice_id))
             .map_err(|e| anyhow!("TTS synthesis failed: {}", e))?;
 
-        // Apply speed adjustment by modifying the effective sample rate
-        // Higher speed = higher sample rate during playback = faster speech
-        let adjusted_sample_rate = (SAMPLE_RATE as f32 * clamped_speed) as u32;
-
-        Ok(AudioBuffer::new(samples, adjusted_sample_rate))
+        Ok(AudioBuffer::new(samples, SAMPLE_RATE))
     }
 }
 
@@ -167,20 +147,14 @@ impl TextToSpeech for KokoroEngine {
     }
 }
 
-/// Calculate adjusted sample rate for speed control (with clamping)
-pub fn calculate_adjusted_sample_rate(speed: f32) -> u32 {
-    let clamped_speed = speed.clamp(MIN_SPEED, MAX_SPEED);
-    (SAMPLE_RATE as f32 * clamped_speed) as u32
-}
-
 /// Validate that all required TTS model files exist in the given directory
 pub fn validate_model_files(model_dir: &Path) -> Result<(), Vec<&'static str>> {
     let mut missing = Vec::new();
 
-    if !model_dir.join("kokoro-v1.0.onnx").exists() {
+    if !is_complete(&model_dir.join("kokoro-v1.0.onnx"), MIN_MODEL_BYTES) {
         missing.push("kokoro-v1.0.onnx");
     }
-    if !model_dir.join("voices-v1.0.bin").exists() {
+    if !is_complete(&model_dir.join("voices-v1.0.bin"), MIN_VOICES_BYTES) {
         missing.push("voices-v1.0.bin");
     }
 
@@ -199,52 +173,6 @@ mod tests {
     #[test]
     fn test_sample_rate_constant() {
         assert_eq!(SAMPLE_RATE, 24000);
-    }
-
-    #[test]
-    fn test_speed_adjustment_normal() {
-        // Speed 1.0 should give base sample rate
-        let rate = calculate_adjusted_sample_rate(1.0);
-        assert_eq!(rate, 24000);
-    }
-
-    #[test]
-    fn test_speed_adjustment_faster() {
-        // Speed 1.5 should give higher sample rate (faster playback)
-        let rate = calculate_adjusted_sample_rate(1.5);
-        assert_eq!(rate, 36000);
-    }
-
-    #[test]
-    fn test_speed_adjustment_slower() {
-        // Speed 0.5 should give lower sample rate (slower playback)
-        let rate = calculate_adjusted_sample_rate(0.5);
-        assert_eq!(rate, 12000);
-    }
-
-    #[test]
-    fn test_speed_clamping_too_fast() {
-        // Speed > 5.0 should be clamped to 5.0
-        let rate = calculate_adjusted_sample_rate(10.0);
-        assert_eq!(rate, 120000); // 24000 * 5.0
-    }
-
-    #[test]
-    fn test_speed_clamping_too_slow() {
-        // Speed < 0.25 should be clamped to 0.25
-        let rate = calculate_adjusted_sample_rate(0.1);
-        assert_eq!(rate, 6000); // 24000 * 0.25
-    }
-
-    #[test]
-    fn test_speed_at_boundaries() {
-        // Speed at MIN_SPEED boundary
-        let rate_min = calculate_adjusted_sample_rate(0.25);
-        assert_eq!(rate_min, 6000);
-
-        // Speed at MAX_SPEED boundary
-        let rate_max = calculate_adjusted_sample_rate(5.0);
-        assert_eq!(rate_max, 120000);
     }
 
     #[test]
@@ -267,7 +195,7 @@ mod tests {
         let model_dir = temp_dir.path().to_path_buf();
 
         // Create only the model file
-        std::fs::write(model_dir.join("kokoro-v1.0.onnx"), b"fake").unwrap();
+        std::fs::File::create(model_dir.join("kokoro-v1.0.onnx")).unwrap().set_len(MIN_MODEL_BYTES).unwrap();
 
         let result = validate_model_files(&model_dir);
         assert!(result.is_err());
@@ -283,11 +211,23 @@ mod tests {
         let model_dir = temp_dir.path().to_path_buf();
 
         // Create both required files
-        std::fs::write(model_dir.join("kokoro-v1.0.onnx"), b"fake").unwrap();
-        std::fs::write(model_dir.join("voices-v1.0.bin"), b"fake").unwrap();
+        std::fs::File::create(model_dir.join("kokoro-v1.0.onnx")).unwrap().set_len(MIN_MODEL_BYTES).unwrap();
+        std::fs::File::create(model_dir.join("voices-v1.0.bin")).unwrap().set_len(MIN_VOICES_BYTES).unwrap();
 
         let result = validate_model_files(&model_dir);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_model_files_rejects_error_pages() {
+        // What the old 404 download left behind on real machines.
+        let temp_dir = tempdir().unwrap();
+        let model_dir = temp_dir.path().to_path_buf();
+        std::fs::write(model_dir.join("kokoro-v1.0.onnx"), b"Entry not found").unwrap();
+        std::fs::write(model_dir.join("voices-v1.0.bin"), b"Entry not found").unwrap();
+
+        let missing = validate_model_files(&model_dir).unwrap_err();
+        assert_eq!(missing.len(), 2);
     }
 
     #[test]

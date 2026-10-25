@@ -15,10 +15,13 @@ impl ModelDownloader {
         }
     }
 
+    /// Download `url` to `dest`. With `expected_sha256`, the file is hashed
+    /// while streaming and rejected (nothing left at `dest`) on a mismatch.
     pub async fn download<F>(
         &self,
         url: &str,
         dest: &Path,
+        expected_sha256: Option<&str>,
         progress_callback: F,
     ) -> Result<()>
     where
@@ -26,34 +29,58 @@ impl ModelDownloader {
     {
         tracing::info!("Downloading from: {}", url);
 
-        let response = self.client.get(url).send().await?;
+        // A non-2xx response (e.g. a moved file's 404 page) must never be
+        // saved as the model.
+        let response = self.client.get(url).send().await?.error_for_status()?;
         let total_size = response.content_length().unwrap_or(0);
 
         tracing::info!("Download size: {} bytes", total_size);
 
-        let mut file = tokio::fs::File::create(dest).await?;
+        // Write to a .part file and rename only once complete, so an
+        // interrupted download never looks like a finished model.
+        let part = part_path(dest);
+        let mut file = tokio::fs::File::create(&part).await?;
         let mut downloaded: u64 = 0;
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
         let mut stream = response.bytes_stream();
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await?;
+        let streamed: Result<()> = async {
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await?;
+                sha2::Digest::update(&mut hasher, &chunk);
 
-            downloaded += chunk.len() as u64;
+                downloaded += chunk.len() as u64;
 
-            let progress = DownloadProgress {
-                downloaded,
-                total: total_size,
-                percentage: if total_size > 0 {
-                    (downloaded as f64 / total_size as f64 * 100.0) as u8
-                } else {
-                    0
-                },
-            };
+                let progress = DownloadProgress {
+                    downloaded,
+                    total: total_size,
+                    percentage: if total_size > 0 {
+                        (downloaded as f64 / total_size as f64 * 100.0) as u8
+                    } else {
+                        0
+                    },
+                };
 
-            progress_callback(progress);
+                progress_callback(progress);
+            }
+            tokio::io::AsyncWriteExt::flush(&mut file).await?;
+            Ok(())
+        }
+        .await;
+        drop(file);
+
+        let digest = sha2::Digest::finalize(hasher);
+        let actual: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
+        let result = streamed
+            .and_then(|()| check_complete(downloaded, total_size))
+            .and_then(|()| check_sha256(&actual, expected_sha256));
+        if let Err(e) = result {
+            let _ = tokio::fs::remove_file(&part).await;
+            return Err(e);
         }
 
+        tokio::fs::rename(&part, dest).await?;
         tracing::info!("Download complete: {:?}", dest);
         Ok(())
     }
@@ -62,6 +89,7 @@ impl ModelDownloader {
         &self,
         url: &str,
         dest: &Path,
+        expected_sha256: Option<&str>,
         progress_callback: F,
         max_retries: u32,
     ) -> Result<()>
@@ -76,7 +104,7 @@ impl ModelDownloader {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2_u64.pow(attempt))).await;
             }
 
-            match self.download(url, dest, progress_callback.clone()).await {
+            match self.download(url, dest, expected_sha256, progress_callback.clone()).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
                     tracing::warn!("Download attempt {} failed: {}", attempt + 1, e);
@@ -100,6 +128,32 @@ pub struct DownloadProgress {
     pub downloaded: u64,
     pub total: u64,
     pub percentage: u8,
+}
+
+/// Temporary path a download is written to before it is complete.
+pub fn part_path(dest: &Path) -> std::path::PathBuf {
+    let mut name = dest.file_name().unwrap_or_default().to_os_string();
+    name.push(".part");
+    dest.with_file_name(name)
+}
+
+/// Compare a hex SHA-256 against the expected one (case-insensitive).
+fn check_sha256(actual: &str, expected: Option<&str>) -> Result<()> {
+    match expected {
+        Some(want) if !want.eq_ignore_ascii_case(actual) => {
+            anyhow::bail!("Checksum mismatch: expected {}, got {}", want, actual)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// A download is complete when it received the advertised length (or, when
+/// no length was sent, at least something).
+fn check_complete(downloaded: u64, expected: u64) -> Result<()> {
+    if (expected > 0 && downloaded != expected) || downloaded == 0 {
+        anyhow::bail!("Download incomplete: received {} of {} bytes", downloaded, expected);
+    }
+    Ok(())
 }
 
 /// Extract a zip file to a directory
@@ -146,14 +200,8 @@ pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
             std::io::copy(&mut file, &mut outfile)?;
         }
 
-        // Set permissions on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Some(mode) = file.unix_mode() {
-                std::fs::set_permissions(&outpath, std::fs::Permissions::from_mode(mode))?;
-            }
-        }
+        // Archive-supplied modes are not applied: a hostile zip could set
+        // setuid or world-writable bits. Files keep the default 0644/0755.
     }
 
     tracing::info!("Extraction complete: {:?}", dest_dir);
@@ -249,6 +297,90 @@ mod tests {
     }
 
     #[test]
+    fn test_part_path() {
+        let p = part_path(Path::new("/tmp/models/kokoro-v1.0.onnx"));
+        assert_eq!(p, Path::new("/tmp/models/kokoro-v1.0.onnx.part"));
+    }
+
+    #[test]
+    fn test_check_complete() {
+        assert!(check_complete(100, 100).is_ok());
+        assert!(check_complete(42, 0).is_ok());
+        assert!(check_complete(99, 100).is_err(), "truncated");
+        assert!(check_complete(0, 0).is_err(), "empty body");
+    }
+
+    /// Serve one canned HTTP response on a local port.
+    async fn serve_once(status: &str, body: &'static [u8], content_length: Option<usize>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let status = status.to_string();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            let len = content_length.unwrap_or(body.len());
+            let head = format!("HTTP/1.1 {status}\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n");
+            let _ = sock.write_all(head.as_bytes()).await;
+            let _ = sock.write_all(body).await;
+        });
+        format!("http://{addr}/model.bin")
+    }
+
+    #[tokio::test]
+    async fn test_download_404_leaves_no_file() {
+        let url = serve_once("404 Not Found", b"Entry not found", None).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+        let result = ModelDownloader::new().download(&url, &dest, None, |_| {}).await;
+        assert!(result.is_err());
+        assert!(!dest.exists(), "error page must not be saved as the model");
+        assert!(!part_path(&dest).exists());
+    }
+
+    #[tokio::test]
+    async fn test_download_truncated_leaves_no_file() {
+        let url = serve_once("200 OK", b"only part", Some(1000)).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+        let result = ModelDownloader::new().download(&url, &dest, None, |_| {}).await;
+        assert!(result.is_err());
+        assert!(!dest.exists());
+        assert!(!part_path(&dest).exists());
+    }
+
+    #[tokio::test]
+    async fn test_download_checksum() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+
+        let url = serve_once("200 OK", b"model bytes", None).await;
+        let wrong = "0".repeat(64);
+        let err = ModelDownloader::new().download(&url, &dest, Some(&wrong), |_| {}).await.unwrap_err();
+        assert!(err.to_string().contains("Checksum mismatch"), "{err}");
+        assert!(!dest.exists() && !part_path(&dest).exists());
+
+        let url = serve_once("200 OK", b"model bytes", None).await;
+        let computed = {
+            use sha2::Digest;
+            sha2::Sha256::digest(b"model bytes").iter().map(|b| format!("{:02x}", b)).collect::<String>()
+        };
+        ModelDownloader::new().download(&url, &dest, Some(&computed.to_uppercase()), |_| {}).await.unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"model bytes");
+    }
+
+    #[tokio::test]
+    async fn test_download_success() {
+        let url = serve_once("200 OK", b"model bytes", None).await;
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+        ModelDownloader::new().download(&url, &dest, None, |_| {}).await.unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"model bytes");
+        assert!(!part_path(&dest).exists());
+    }
+
+    #[test]
     fn test_download_progress_percentage() {
         let progress = DownloadProgress {
             downloaded: 50,
@@ -263,5 +395,27 @@ mod tests {
             percentage: 100,
         };
         assert_eq!(progress_complete.percentage, 100);
+    }
+}
+
+/// Real-network check of the Phonon files, into the app's models folder:
+/// `cargo test --lib phonon_real_download -- --ignored --nocapture`
+#[cfg(test)]
+mod real_download {
+    use super::*;
+    use crate::engines::phonon;
+
+    #[tokio::test]
+    #[ignore]
+    async fn phonon_real_download() {
+        let dir = dirs::data_dir().unwrap().join("com.blahcubed.app/models/tts").join(phonon::MODEL_ID);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, size, sha) in phonon::FILES {
+            let dest = dir.join(name);
+            ModelDownloader::new().download(&phonon::file_url(name), &dest, Some(sha), |_| {}).await.unwrap();
+            assert_eq!(std::fs::metadata(&dest).unwrap().len(), size, "{name}");
+            println!("ok {name} {size}");
+        }
+        assert!(phonon::missing_files(&dir).is_empty());
     }
 }

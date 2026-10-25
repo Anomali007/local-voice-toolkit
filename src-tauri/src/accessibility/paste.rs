@@ -19,20 +19,12 @@ pub fn paste_text(text: &str) -> Result<(), String> {
     // Small delay to ensure clipboard is set
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    // Simulate Cmd+V
-    let script = r#"
-        tell application "System Events"
-            keystroke "v" using {command down}
-        end tell
-    "#;
+    // Post Cmd+V straight to the system. The old route (osascript telling
+    // System Events to keystroke) also needed an Automation grant and failed
+    // silently without it.
+    let pasted = send_cmd_v();
 
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if output.status.success() {
+    if pasted.is_ok() {
         // Restore the previous clipboard after the target app has consumed
         // the paste. Only text is preserved (pbpaste limitation).
         if let Some(prev) = previous.filter(|p| !p.is_empty()) {
@@ -45,8 +37,30 @@ pub fn paste_text(text: &str) -> Result<(), String> {
         }
         Ok(())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
+        pasted
     }
+}
+
+/// Press and release Cmd+V in the frontmost app.
+fn send_cmd_v() -> Result<(), String> {
+    use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    // Posting keyboard events is silently dropped without Accessibility.
+    if !crate::commands::permissions::accessibility_trusted() {
+        return Err("Accessibility permission is not granted".into());
+    }
+    const KEY_V: u16 = 9; // kVK_ANSI_V
+    let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+        .map_err(|_| "Could not create keyboard event source".to_string())?;
+    for down in [true, false] {
+        let event = CGEvent::new_keyboard_event(source.clone(), KEY_V, down)
+            .map_err(|_| "Could not create Cmd+V event".to_string())?;
+        // Only Command: a still-held Option must not turn this into Option+Cmd+V.
+        event.set_flags(CGEventFlags::CGEventFlagCommand);
+        event.post(CGEventTapLocation::HID);
+    }
+    Ok(())
 }
 
 /// Read the current text clipboard contents, if any.
@@ -56,6 +70,11 @@ fn get_clipboard_text() -> Option<String> {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+}
+
+/// Put `text` on the clipboard without pasting.
+pub fn copy_to_clipboard(text: &str) -> Result<(), std::io::Error> {
+    set_clipboard(text)
 }
 
 /// Set the clipboard contents

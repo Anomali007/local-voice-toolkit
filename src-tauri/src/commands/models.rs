@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
+use crate::engines::{parakeet, phonon};
 use crate::models::{
-    download::{extract_zip, ModelDownloader},
+    download::{extract_zip, DownloadProgress, ModelDownloader},
     registry::ModelRegistry,
 };
 
@@ -17,6 +18,10 @@ pub struct ModelInfo {
     pub download_url: String,
     pub status: ModelStatus,
     pub description: String,
+    /// SHA-256 of the downloaded file (empty for multi-file models, which
+    /// list per-file hashes themselves).
+    #[serde(default)]
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -34,6 +39,9 @@ pub enum ModelStatus {
     Downloading,
 }
 
+/// (name, size, sha256) per file, and how to build each file's URL.
+type MultiFile = (&'static [(&'static str, u64, &'static str)], fn(&str) -> String);
+
 #[tauri::command]
 pub fn list_models() -> Vec<ModelInfo> {
     let registry = ModelRegistry::new();
@@ -50,12 +58,7 @@ pub fn list_models() -> Vec<ModelInfo> {
                 })
                 .join(&model.id);
 
-            model.status = if model_path.exists() {
-                ModelStatus::Downloaded
-            } else {
-                ModelStatus::Available
-            };
-
+            model.status = status_on_disk(&model, &model_path);
             model
         })
         .collect()
@@ -67,6 +70,7 @@ pub async fn download_model(
     window: tauri::Window,
 ) -> Result<String, String> {
     tracing::info!("Downloading model: {}", model_id);
+    let app_handle = window.app_handle().clone();
 
     let registry = ModelRegistry::new();
     let model = registry
@@ -88,12 +92,54 @@ pub async fn download_model(
     // Check if this is a CoreML model (zip file that needs extraction)
     let is_coreml = model_id.ends_with(".mlmodelc") && model.download_url.ends_with(".zip");
 
-    if is_coreml {
+    // Every download is checked against a known SHA-256 before it is used.
+    let expected = (!model.sha256.is_empty()).then_some(model.sha256.as_str());
+
+    // Multi-file models: (files, url builder) per model id.
+    let multi: Option<MultiFile> = match model_id.as_str() {
+        phonon::MODEL_ID => Some((&phonon::FILES, phonon::file_url)),
+        parakeet::MODEL_ID => Some((&parakeet::FILES, parakeet::file_url)),
+        _ => None,
+    };
+
+    if let Some((files, file_url)) = multi {
+        // Several files into one directory. Files already complete are
+        // skipped, so a retry resumes where the last attempt failed.
+        std::fs::create_dir_all(&dest_path).map_err(|e| e.to_string())?;
+        let total: u64 = files.iter().map(|(_, size, _)| size).sum();
+        let mut done = 0u64;
+        for &(name, size, sha256) in files {
+            let file_path = dest_path.join(name);
+            let complete = std::fs::metadata(&file_path).map(|m| m.len() == size).unwrap_or(false);
+            if !complete {
+                let window = window.clone();
+                let id = model_id_for_progress.clone();
+                downloader
+                    .download(&file_url(name), &file_path, Some(sha256), move |p| {
+                        let downloaded = done + p.downloaded;
+                        let progress = DownloadProgress {
+                            downloaded,
+                            total,
+                            percentage: (downloaded as f64 / total as f64 * 100.0).min(100.0) as u8,
+                        };
+                        let _ = window.emit("model-download-progress", (&id, progress));
+                    })
+                    .await
+                    .map_err(|e| format!("Failed to download {}: {}", name, e))?;
+            }
+            done += size;
+        }
+        let missing = multi_file_missing(&model_id, &dest_path);
+        if !missing.is_empty() {
+            return Err(format!("{} download incomplete: {}", model.name, missing.join(", ")));
+        }
+        tracing::info!("{} downloaded", model.name);
+    } else if is_coreml {
         // Download to a temp zip file
         let zip_path = type_dir.join(format!("{}.zip", model_id));
 
         downloader
-            .download(&model.download_url, &zip_path, move |progress| {
+            .download(&model.download_url, &zip_path, expected, move |progress| {
                 let _ = window.emit("model-download-progress", (&model_id_for_progress, progress));
             })
             .await
@@ -112,7 +158,7 @@ pub async fn download_model(
     } else {
         // Regular file download
         downloader
-            .download(&model.download_url, &dest_path, move |progress| {
+            .download(&model.download_url, &dest_path, expected, move |progress| {
                 let _ = window.emit("model-download-progress", (&model_id_for_progress, progress));
             })
             .await
@@ -120,6 +166,9 @@ pub async fn download_model(
 
         tracing::info!("Model downloaded: {}", model_id);
     }
+
+    // The Voice menu enables Phonon once its files are present.
+    crate::tray::refresh(&app_handle);
 
     Ok(dest_path.to_string_lossy().to_string())
 }
@@ -168,11 +217,34 @@ pub fn get_model_status(model_id: String) -> Result<ModelStatus, String> {
         })
         .join(&model_id);
 
-    Ok(if model_path.exists() {
+    Ok(status_on_disk(&model, &model_path))
+}
+
+/// Files of a multi-file model that are missing or the wrong size.
+fn multi_file_missing(model_id: &str, dir: &std::path::Path) -> Vec<&'static str> {
+    match model_id {
+        phonon::MODEL_ID => phonon::missing_files(dir),
+        parakeet::MODEL_ID => parakeet::missing_files(dir),
+        _ => Vec::new(),
+    }
+}
+
+/// A model counts as downloaded only when its files are really there: a
+/// failed download used to leave a 15-byte error page that showed as
+/// "Downloaded". Single files must be at least half the expected size.
+fn status_on_disk(model: &ModelInfo, path: &std::path::Path) -> ModelStatus {
+    let complete = if model.id == phonon::MODEL_ID || model.id == parakeet::MODEL_ID {
+        multi_file_missing(&model.id, path).is_empty()
+    } else if path.is_dir() {
+        true
+    } else {
+        std::fs::metadata(path).map(|m| m.len() >= model.size_bytes / 2).unwrap_or(false)
+    };
+    if complete {
         ModelStatus::Downloaded
     } else {
         ModelStatus::Available
-    })
+    }
 }
 
 fn get_models_dir() -> PathBuf {
@@ -180,4 +252,79 @@ fn get_models_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("com.blahcubed.app")
         .join("models")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(id: &str, size_bytes: u64) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            name: id.into(),
+            model_type: ModelType::Tts,
+            size_bytes,
+            size_display: String::new(),
+            download_url: String::new(),
+            status: ModelStatus::Available,
+            description: String::new(),
+            sha256: String::new(),
+        }
+    }
+
+    #[test]
+    fn error_page_is_not_downloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kokoro-v1.0.onnx");
+        let m = model("kokoro-v1.0.onnx", 325_532_387);
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
+        std::fs::write(&path, b"Entry not found").unwrap();
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
+        std::fs::File::create(&path).unwrap().set_len(325_532_387).unwrap();
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Downloaded);
+    }
+
+    #[test]
+    fn phonon_needs_every_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(phonon::MODEL_ID);
+        std::fs::create_dir_all(&path).unwrap();
+        let m = model(phonon::MODEL_ID, phonon::total_size());
+        // An existing directory alone is not enough.
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
+        for (name, size, _) in phonon::FILES {
+            std::fs::File::create(path.join(name)).unwrap().set_len(size).unwrap();
+        }
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Downloaded);
+    }
+
+    #[test]
+    fn parakeet_needs_every_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(parakeet::MODEL_ID);
+        std::fs::create_dir_all(&path).unwrap();
+        let mut m = model(parakeet::MODEL_ID, parakeet::total_size());
+        m.model_type = ModelType::Stt;
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
+        let mut files = parakeet::FILES.iter();
+        for (name, size, _) in files.by_ref().take(parakeet::FILES.len() - 1) {
+            std::fs::File::create(path.join(name)).unwrap().set_len(*size).unwrap();
+        }
+        // One file short is still not downloaded.
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Available);
+        let (name, size, _) = files.next().unwrap();
+        std::fs::File::create(path.join(name)).unwrap().set_len(*size).unwrap();
+        assert_eq!(status_on_disk(&m, &path), ModelStatus::Downloaded);
+    }
+
+    #[test]
+    fn registry_lists_phonon_and_working_kokoro_urls() {
+        let models = ModelRegistry::new().get_all_models();
+        assert!(models.iter().any(|m| m.id == phonon::MODEL_ID && m.model_type == ModelType::Tts));
+        for id in ["kokoro-v1.0.onnx", "voices-v1.0.bin"] {
+            let m = models.iter().find(|m| m.id == id).unwrap();
+            // The old Hugging Face path 404s and was saved as the model.
+            assert!(!m.download_url.contains("onnx-community"), "{}", m.download_url);
+        }
+    }
 }

@@ -10,6 +10,21 @@ use std::thread;
 
 use super::silence::SilenceDetector;
 
+/// While true, captured audio is dropped (not appended, silence detector
+/// idle, level reads 0). Set by the hold-Space-to-pause gesture. A process
+/// global rather than a per-capture handle so the key-event thread can flip
+/// it without taking the async capture lock; `start`/`stop` always clear it,
+/// so a pause can never outlive its recording.
+static PAUSED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_paused(paused: bool) {
+    PAUSED.store(paused, Ordering::SeqCst);
+}
+
+pub fn is_paused() -> bool {
+    PAUSED.load(Ordering::SeqCst)
+}
+
 /// Configuration for silence detection auto-stop.
 #[derive(Debug, Clone)]
 pub struct SilenceConfig {
@@ -38,15 +53,15 @@ pub struct AudioCapture {
     is_recording: Arc<AtomicBool>,
     silence_triggered: Arc<AtomicBool>,
     current_level: Arc<AtomicU32>,
+    /// Rate of the audio handed to Whisper by `stop()`.
     sample_rate: u32,
+    /// Rate of the samples in `buffer` (set when the stream starts).
+    buffer_rate: Arc<AtomicU32>,
     silence_config: SilenceConfig,
 }
 
-// Implement Send + Sync for AudioCapture
-// This is safe because we don't store the cpal::Stream directly,
-// instead it runs in a dedicated thread controlled by AtomicBool
-unsafe impl Send for AudioCapture {}
-unsafe impl Sync for AudioCapture {}
+// AudioCapture is Send + Sync on its own (Arcs, atomics, plain values);
+// the non-Send cpal::Stream lives on the capture thread.
 
 impl AudioCapture {
     /// Create a new audio capture with default settings.
@@ -75,6 +90,7 @@ impl AudioCapture {
             silence_triggered: Arc::new(AtomicBool::new(false)),
             current_level: Arc::new(AtomicU32::new(0)),
             sample_rate: 16000, // Whisper expects 16kHz
+            buffer_rate: Arc::new(AtomicU32::new(16000)),
             silence_config,
         })
     }
@@ -91,6 +107,7 @@ impl AudioCapture {
             buf.clear();
         }
         self.silence_triggered.store(false, Ordering::SeqCst);
+        set_paused(false);
 
         self.is_recording.store(true, Ordering::SeqCst);
 
@@ -98,8 +115,9 @@ impl AudioCapture {
         let is_recording = Arc::clone(&self.is_recording);
         let silence_triggered = Arc::clone(&self.silence_triggered);
         let current_level = Arc::clone(&self.current_level);
-        let sample_rate = self.sample_rate;
+        let buffer_rate = Arc::clone(&self.buffer_rate);
         let silence_config = self.silence_config.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel::<Result<()>>(1);
 
         // Spawn a dedicated thread for audio capture
         // This keeps the non-Send cpal::Stream contained
@@ -109,13 +127,26 @@ impl AudioCapture {
                 is_recording,
                 silence_triggered,
                 current_level,
-                sample_rate,
+                buffer_rate,
                 silence_config,
+                &started_tx,
             );
             if let Err(e) = result {
                 tracing::error!("Audio capture error: {}", e);
+                // Reaches start() if the stream never came up.
+                let _ = started_tx.try_send(Err(e));
             }
         });
+
+        // Wait for the stream to start, so a failure reaches the caller
+        // instead of silently recording nothing.
+        let started = started_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap_or_else(|_| Err(anyhow!("Microphone did not start within 3 seconds")));
+        if let Err(e) = started {
+            self.is_recording.store(false, Ordering::SeqCst);
+            return Err(anyhow!("Could not start the microphone: {}", e));
+        }
 
         Ok(())
     }
@@ -130,8 +161,17 @@ impl AudioCapture {
         f32::from_bits(self.current_level.load(Ordering::Relaxed))
     }
 
+    /// Throw away everything captured so far (used to cut the start chime,
+    /// which the microphone hears, out of the recording).
+    pub fn discard_buffered(&self) {
+        if let Ok(mut buf) = self.buffer.lock() {
+            buf.clear();
+        }
+    }
+
     pub fn stop(self) -> Result<Vec<f32>> {
         self.is_recording.store(false, Ordering::SeqCst);
+        set_paused(false);
 
         // Give the capture thread time to finish
         thread::sleep(std::time::Duration::from_millis(100));
@@ -139,13 +179,24 @@ impl AudioCapture {
         let buffer = self.buffer.lock()
             .map_err(|e| anyhow!("Failed to acquire audio buffer lock: {}", e))?
             .clone();
-        tracing::info!("Captured {} samples", buffer.len());
+        let buffer_rate = self.buffer_rate.load(Ordering::SeqCst);
+        tracing::info!("Captured {} samples at {}Hz", buffer.len(), buffer_rate);
 
-        Ok(buffer)
+        Ok(convert_rate(&buffer, buffer_rate, self.sample_rate))
     }
 
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// Copy of the audio recorded so far, at the Whisper rate, for the live
+    /// transcript shown while the user is still speaking.
+    pub fn snapshot(&self) -> Vec<f32> {
+        let buffer = match self.buffer.lock() {
+            Ok(buffer) => buffer.clone(),
+            Err(_) => return Vec::new(),
+        };
+        convert_rate(&buffer, self.buffer_rate.load(Ordering::SeqCst), self.sample_rate)
     }
 }
 
@@ -154,95 +205,280 @@ fn run_capture_loop(
     is_recording: Arc<AtomicBool>,
     silence_triggered: Arc<AtomicBool>,
     current_level: Arc<AtomicU32>,
-    sample_rate: u32,
+    buffer_rate: Arc<AtomicU32>,
     silence_config: SilenceConfig,
+    started: &std::sync::mpsc::SyncSender<Result<()>>,
 ) -> Result<()> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
         .ok_or_else(|| anyhow!("No input device available"))?;
 
-    let config = cpal::StreamConfig {
-        channels: 1,
-        sample_rate: cpal::SampleRate(sample_rate),
-        buffer_size: cpal::BufferSize::Default,
-    };
-
-    let buffer_clone = Arc::clone(&buffer);
-    let silence_triggered_clone = Arc::clone(&silence_triggered);
-    let is_recording_clone = Arc::clone(&is_recording);
-    let current_level_clone = Arc::clone(&current_level);
+    // Record in the device's own format. Most Mac microphones only offer
+    // 44.1/48 kHz, so asking for Whisper's 16 kHz failed to open the stream
+    // and every dictation came back empty. Audio is converted in stop().
+    let supported = device
+        .default_input_config()
+        .map_err(|e| anyhow!("No usable input format: {}", e))?;
+    let format = supported.sample_format();
+    let config: cpal::StreamConfig = supported.into();
+    let rate = config.sample_rate.0;
+    let channels = config.channels as usize;
+    tracing::info!(
+        "Using input device: {} ({} Hz, {} ch, {:?})",
+        device.name().unwrap_or_default(),
+        rate,
+        channels,
+        format
+    );
 
     // Create silence detector if enabled
-    let silence_detector = if silence_config.enabled {
-        Some(Mutex::new(SilenceDetector::new(
+    let silence_detector = silence_config.enabled.then(|| {
+        Mutex::new(SilenceDetector::new(
             silence_config.threshold,
             silence_config.duration_secs,
-            sample_rate,
-        )))
-    } else {
-        None
+            rate,
+        ))
+    });
+
+    // The callback owns these; the loop below watches its own handles.
+    let recording = Arc::clone(&is_recording);
+    let silenced = Arc::clone(&silence_triggered);
+
+    // Long dictations: when the device rate is a whole multiple of 16 kHz,
+    // store audio already at the Whisper rate (a third of the memory at
+    // 48 kHz). Otherwise keep device-rate audio and convert in stop().
+    let factor = if rate > 16_000 && rate.is_multiple_of(16_000) { (rate / 16_000) as usize } else { 1 };
+    buffer_rate.store(rate / factor as u32, Ordering::SeqCst);
+    let mut decimator = Decimator::new(factor);
+
+    let mut on_samples = move |mono: Vec<f32>| {
+        if is_paused() {
+            current_level.store(0f32.to_bits(), Ordering::Relaxed);
+            return;
+        }
+        // Store audio data, and handle errors gracefully
+        match buffer.lock() {
+            Ok(mut buf) => decimator.push(&mono, &mut buf),
+            Err(e) => {
+                // Log and continue - don't panic in audio callback
+                tracing::error!("Audio buffer lock poisoned, data lost: {}", e);
+                return;
+            }
+        }
+
+        // Compute RMS level for visualization
+        let rms = super::silence::calculate_rms(&mono);
+        current_level.store(rms.to_bits(), Ordering::Relaxed);
+
+        // Process through silence detector
+        if let Some(ref detector_mutex) = silence_detector {
+            match detector_mutex.lock() {
+                Ok(mut detector) => {
+                    if detector.process(&mono) {
+                        // Silence duration exceeded - trigger auto-stop
+                        silence_triggered.store(true, Ordering::SeqCst);
+                        is_recording.store(false, Ordering::SeqCst);
+                    }
+                }
+                Err(e) => tracing::error!("Silence detector lock poisoned: {}", e),
+            }
+        }
     };
 
-    let stream = device.build_input_stream(
-        &config,
-        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-            // Store audio data - use try_lock to avoid blocking, and handle errors gracefully
-            match buffer_clone.lock() {
-                Ok(mut buf) => {
-                    buf.extend_from_slice(data);
-                }
-                Err(e) => {
-                    // Log once and continue - don't panic in audio callback
-                    tracing::error!("Audio buffer lock poisoned, data lost: {}", e);
-                    return;
-                }
-            }
-
-            // Compute RMS level for visualization
-            let rms = super::silence::calculate_rms(data);
-            current_level_clone.store(rms.to_bits(), Ordering::Relaxed);
-
-            // Process through silence detector
-            if let Some(ref detector_mutex) = silence_detector {
-                match detector_mutex.lock() {
-                    Ok(mut detector) => {
-                        if detector.process(data) {
-                            // Silence duration exceeded - trigger auto-stop
-                            silence_triggered_clone.store(true, Ordering::SeqCst);
-                            is_recording_clone.store(false, Ordering::SeqCst);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Silence detector lock poisoned: {}", e);
-                    }
-                }
-            }
-        },
-        |err| {
-            tracing::error!("Audio stream error: {}", err);
-        },
-        None,
-    )?;
+    let err_fn = |err| tracing::error!("Audio stream error: {}", err);
+    let stream = match format {
+        cpal::SampleFormat::F32 => device.build_input_stream(
+            &config,
+            move |data: &[f32], _: &cpal::InputCallbackInfo| on_samples(downmix(data, channels)),
+            err_fn,
+            None,
+        )?,
+        cpal::SampleFormat::I16 => device.build_input_stream(
+            &config,
+            move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                let floats: Vec<f32> = data.iter().map(|&s| s as f32 / 32768.0).collect();
+                on_samples(downmix(&floats, channels))
+            },
+            err_fn,
+            None,
+        )?,
+        other => return Err(anyhow!("Unsupported microphone sample format: {:?}", other)),
+    };
 
     stream.play()?;
+    let _ = started.try_send(Ok(()));
     tracing::info!(
         "Audio capture started at {}Hz (silence detection: {})",
-        sample_rate,
+        rate,
         if silence_config.enabled { "enabled" } else { "disabled" }
     );
 
     // Keep the stream alive while recording
-    while is_recording.load(Ordering::SeqCst) {
+    while recording.load(Ordering::SeqCst) {
         thread::sleep(std::time::Duration::from_millis(10));
     }
 
     // Log reason for stop
-    if silence_triggered.load(Ordering::SeqCst) {
+    if silenced.load(Ordering::SeqCst) {
         tracing::info!("Audio capture stopped (silence auto-stop)");
     } else {
         tracing::info!("Audio capture stopped (manual)");
     }
 
     Ok(())
+}
+
+/// Streaming block-average decimator: keeps partial blocks across audio
+/// callbacks so the output matches decimating the whole recording at once.
+struct Decimator {
+    factor: usize,
+    sum: f32,
+    count: usize,
+}
+
+impl Decimator {
+    fn new(factor: usize) -> Self {
+        Self { factor: factor.max(1), sum: 0.0, count: 0 }
+    }
+
+    fn push(&mut self, input: &[f32], out: &mut Vec<f32>) {
+        if self.factor == 1 {
+            out.extend_from_slice(input);
+            return;
+        }
+        for &x in input {
+            self.sum += x;
+            self.count += 1;
+            if self.count == self.factor {
+                out.push(self.sum / self.factor as f32);
+                self.sum = 0.0;
+                self.count = 0;
+            }
+        }
+    }
+}
+
+/// Average interleaved channels down to mono.
+fn downmix(data: &[f32], channels: usize) -> Vec<f32> {
+    if channels <= 1 {
+        return data.to_vec();
+    }
+    data.chunks(channels)
+        .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
+        .collect()
+}
+
+/// Convert recorded audio to the rate Whisper expects. Whole-number ratios
+/// (48k -> 16k) average each block of samples, which also filters out
+/// content above the new Nyquist; other ratios interpolate.
+pub fn convert_rate(samples: &[f32], from: u32, to: u32) -> Vec<f32> {
+    if from == to || from == 0 || to == 0 {
+        return samples.to_vec();
+    }
+    if from > to && from.is_multiple_of(to) {
+        let n = (from / to) as usize;
+        return samples
+            .chunks(n)
+            .map(|block| block.iter().sum::<f32>() / block.len() as f32)
+            .collect();
+    }
+    super::processing::resample(samples, from, to)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streaming_decimation_matches_whole_recording() {
+        let audio: Vec<f32> = (0..48_000).map(|i| ((i * 7919) % 1000) as f32 / 1000.0 - 0.5).collect();
+        let whole = convert_rate(&audio, 48_000, 16_000);
+        // Uneven callback sizes, as the audio device delivers them.
+        let mut d = Decimator::new(3);
+        let mut streamed = Vec::new();
+        let mut rest = &audio[..];
+        for size in [1usize, 7, 512, 1000, 13].iter().cycle() {
+            if rest.is_empty() {
+                break;
+            }
+            let n = (*size).min(rest.len());
+            d.push(&rest[..n], &mut streamed);
+            rest = &rest[n..];
+        }
+        assert_eq!(streamed.len(), whole.len());
+        assert!(streamed.iter().zip(&whole).all(|(a, b)| (a - b).abs() < 1e-5));
+    }
+
+    #[test]
+    fn pause_flag_round_trips() {
+        set_paused(true);
+        assert!(is_paused());
+        set_paused(false);
+        assert!(!is_paused());
+    }
+
+    #[test]
+    fn downmix_averages_channels() {
+        assert_eq!(downmix(&[1.0, 3.0, -1.0, 1.0], 2), vec![2.0, 0.0]);
+        assert_eq!(downmix(&[0.5, 0.25], 1), vec![0.5, 0.25]);
+    }
+
+    #[test]
+    fn convert_rate_lengths() {
+        let one_sec_48k = vec![0.1; 48_000];
+        assert_eq!(convert_rate(&one_sec_48k, 48_000, 16_000).len(), 16_000);
+        let one_sec_44k = vec![0.1; 44_100];
+        let out = convert_rate(&one_sec_44k, 44_100, 16_000);
+        assert!((out.len() as i64 - 16_000).abs() <= 1, "{}", out.len());
+        assert_eq!(convert_rate(&[0.3; 10], 16_000, 16_000), vec![0.3; 10]);
+    }
+
+    #[test]
+    fn decimation_keeps_speech_band_and_drops_above_nyquist() {
+        let tone = |f: f32| -> Vec<f32> {
+            (0..48_000).map(|i| (2.0 * std::f32::consts::PI * f * i as f32 / 48_000.0).sin()).collect()
+        };
+        let rms = |x: &[f32]| (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt();
+        // 300 Hz (speech) survives nearly intact...
+        assert!(rms(&convert_rate(&tone(300.0), 48_000, 16_000)) > 0.65);
+        // ...while 15 kHz (above the 8 kHz Nyquist) is strongly attenuated.
+        assert!(rms(&convert_rate(&tone(15_000.0), 48_000, 16_000)) < 0.2);
+    }
+}
+
+#[cfg(test)]
+mod device_probe {
+    use cpal::traits::{DeviceTrait, HostTrait};
+
+    /// `cargo test --lib probe_default_input -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn probe_default_input() {
+        let device = cpal::default_host().default_input_device().expect("no input device");
+        println!("device: {}", device.name().unwrap_or_default());
+        println!("default: {:?}", device.default_input_config());
+        for c in device.supported_input_configs().unwrap() {
+            println!("supported: {:?}", c);
+        }
+    }
+}
+
+#[cfg(test)]
+mod real_capture {
+    use super::*;
+
+    /// `cargo test --lib real_capture -- --ignored --nocapture` (uses the mic)
+    #[test]
+    #[ignore]
+    fn records_one_second_at_whisper_rate() {
+        let capture = AudioCapture::with_silence_config(SilenceConfig { enabled: false, ..Default::default() }).unwrap();
+        capture.start().expect("stream must start on the default mic");
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        let buffer_rate = capture.buffer_rate.load(Ordering::SeqCst);
+        let audio = capture.stop().unwrap();
+        let rms = (audio.iter().map(|v| v * v).sum::<f32>() / audio.len().max(1) as f32).sqrt();
+        println!("device {} Hz -> {} samples at 16 kHz, rms {:.5}", buffer_rate, audio.len(), rms);
+        assert!((14_000..=18_500).contains(&audio.len()), "{} samples", audio.len());
+    }
 }

@@ -13,21 +13,20 @@ interface VoicePreviewProps {
 
 export default function VoicePreview({ voice, isSelected, onSelect }: VoicePreviewProps) {
   return (
-    <button
-      onClick={onSelect}
-      className={`p-3 rounded-lg text-left transition-all ${
-        isSelected
-          ? "bg-sky-500/20 border-2 border-sky-500"
-          : "bg-slate-800 border-2 border-transparent hover:border-slate-600"
-      }`}
-    >
-      <div className="flex items-center space-x-2">
-        <span className="text-lg">{voice.gender === "Female" ? "👩" : "👨"}</span>
-        <div>
-          <p className="font-medium text-sm text-slate-100">{voice.name}</p>
-          <p className="text-xs text-slate-400">{voice.language}</p>
-        </div>
-      </div>
+    <button onClick={onSelect} aria-pressed={isSelected} className="tile flex items-center gap-2.5 !p-2.5">
+      <span
+        aria-hidden="true"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[13px] font-semibold text-accent"
+      >
+        {voice.name.slice(0, 1).toUpperCase()}
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-medium">{voice.name}</span>
+        <span className="block truncate text-xs text-muted">
+          {voice.language}
+          {voice.gender ? ` · ${voice.gender}` : ""}
+        </span>
+      </span>
     </button>
   );
 }
