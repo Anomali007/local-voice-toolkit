@@ -60,6 +60,11 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 chrono = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Core Audio process taps (Meetings spike S1)
+objc2-core-audio = "0.3"
+objc2-core-audio-types = "0.3"
+objc2-core-foundation = "0.3"
+objc2-foundation = "0.3"
 # macos-accessibility-client = "0.0.1"  # Uncomment when ready
 
 [dev-dependencies]

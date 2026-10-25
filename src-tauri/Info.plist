@@ -5,6 +5,8 @@
     <!-- Privacy descriptions -->
     <key>NSMicrophoneUsageDescription</key>
     <string>Blah³ needs microphone access for speech-to-text dictation.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Blah³ records system audio during meetings you start so it can transcribe the other side of the call.</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>Blah³ needs accessibility access to read selected text for text-to-speech and to paste transcriptions.</string>
 
