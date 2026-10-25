@@ -83,7 +83,9 @@ unsafe extern "C-unwind" fn io_proc(
     let n_bufs = (*list).mNumberBuffers as usize;
     let bufs = std::slice::from_raw_parts((*list).mBuffers.as_ptr(), n_bufs);
     shared.callbacks.fetch_add(1, Ordering::Relaxed);
-    shared.buffers_per_cb.store(n_bufs as u32, Ordering::Relaxed);
+    shared
+        .buffers_per_cb
+        .store(n_bufs as u32, Ordering::Relaxed);
     if n_bufs == 0 || bufs[0].mData.is_null() {
         shared.zero_callbacks.fetch_add(1, Ordering::Relaxed);
         return 0;
@@ -110,7 +112,9 @@ unsafe extern "C-unwind" fn io_proc(
     if all_zero {
         shared.zero_callbacks.fetch_add(1, Ordering::Relaxed);
     } else {
-        shared.nonzero_frames.fetch_add(frames as u64, Ordering::Relaxed);
+        shared
+            .nonzero_frames
+            .fetch_add(frames as u64, Ordering::Relaxed);
         let _ = shared.first_nonzero_frame.compare_exchange(
             u64::MAX,
             start_frame,
@@ -146,7 +150,13 @@ fn check(status: OSStatus, what: &str) -> Result<()> {
         let b = status.to_be_bytes();
         let fourcc: String = b
             .iter()
-            .map(|c| if c.is_ascii_graphic() { *c as char } else { '.' })
+            .map(|c| {
+                if c.is_ascii_graphic() {
+                    *c as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
         bail!("{what} failed: OSStatus {status} ('{fourcc}')");
     }
@@ -172,7 +182,10 @@ unsafe fn get_prop<T: Copy, Q>(
     let mut out = std::mem::MaybeUninit::<T>::zeroed();
     let mut size = std::mem::size_of::<T>() as u32;
     let (q_size, q_ptr) = match qualifier {
-        Some(q) => (std::mem::size_of::<Q>() as u32, q as *const Q as *const c_void),
+        Some(q) => (
+            std::mem::size_of::<Q>() as u32,
+            q as *const Q as *const c_void,
+        ),
         None => (0, std::ptr::null()),
     };
     check(
@@ -330,7 +343,10 @@ pub fn run(secs: u64, out: &Path) -> Result<()> {
                 &[&*out_uid as &AnyObject],
             );
             let sub_tap: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
-                &[&*ns(kAudioSubTapUIDKey), &*ns(kAudioSubTapDriftCompensationKey)],
+                &[
+                    &*ns(kAudioSubTapUIDKey),
+                    &*ns(kAudioSubTapDriftCompensationKey),
+                ],
                 &[&*tap_uid as &AnyObject, &*NSNumber::new_bool(true)],
             );
             let agg_uid = NSUUID::new().UUIDString();
@@ -369,9 +385,11 @@ pub fn run(secs: u64, out: &Path) -> Result<()> {
                 get_prop::<_, ()>(agg, kAudioDevicePropertyNominalSampleRate, None, "agg rate")
                     .unwrap_or(0.0);
             let id_size = std::mem::size_of::<AudioObjectID>() as u32;
-            let agg_input_streams =
-                prop_size(agg, kAudioDevicePropertyStreams, kAudioObjectPropertyScopeInput)
-                    / id_size;
+            let agg_input_streams = prop_size(
+                agg,
+                kAudioDevicePropertyStreams,
+                kAudioObjectPropertyScopeInput,
+            ) / id_size;
             let cf_size = std::mem::size_of::<*const c_void>() as u32;
             let agg_taps = prop_size(
                 agg,
@@ -541,6 +559,9 @@ mod tests {
             .and_then(|s| s.parse().ok())
             .unwrap_or(10);
         super::run(secs, &out).unwrap();
-        println!("{}", std::fs::read_to_string(out.join("report.json")).unwrap());
+        println!(
+            "{}",
+            std::fs::read_to_string(out.join("report.json")).unwrap()
+        );
     }
 }

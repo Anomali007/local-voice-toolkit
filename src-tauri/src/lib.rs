@@ -5,6 +5,8 @@ mod dictionary;
 mod engines;
 mod history;
 mod hotkeys;
+#[allow(dead_code)] // wired into the app in Meetings Phase 1
+mod meetings;
 mod models;
 mod overlay;
 mod right_option;
