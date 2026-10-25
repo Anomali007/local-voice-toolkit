@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+pub mod call_recorder;
 pub mod capture;
 pub mod playback;
 pub mod processing;

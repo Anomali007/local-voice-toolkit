@@ -5,5 +5,9 @@ fn main() {
     if blah3_lib::tap_spike_from_env() {
         return;
     }
+    #[cfg(target_os = "macos")]
+    if blah3_lib::call_recorder_from_env() {
+        return;
+    }
     blah3_lib::run()
 }

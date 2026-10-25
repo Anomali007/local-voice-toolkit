@@ -56,6 +56,13 @@ pub fn tap_spike_from_env() -> bool {
     audio::tap_spike::run_from_env()
 }
 
+/// Meetings spike S4: records the mic and the system-audio tap side by side
+/// when `BLAH3_S4` is set. Returns true if it ran.
+#[cfg(target_os = "macos")]
+pub fn call_recorder_from_env() -> bool {
+    audio::call_recorder::run_from_env()
+}
+
 pub fn run() {
     // Initialize tracing: stdout, plus a log file, since a launched app's
     // stdout goes nowhere (~/Library/Logs/Blah³/blah3.log).

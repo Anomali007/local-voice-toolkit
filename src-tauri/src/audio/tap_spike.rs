@@ -33,7 +33,7 @@ use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSUUID};
 const MAX_WAV_SECS: u64 = 120;
 
 /// MacTypes `OSStatus` (the bindings keep their alias crate-private).
-type OSStatus = i32;
+pub(crate) type OSStatus = i32;
 
 /// Entry point for the signed-build path. Returns true when the spike ran
 /// (the caller should exit instead of starting the app).
@@ -141,11 +141,11 @@ unsafe extern "C-unwind" fn io_proc(
     0
 }
 
-fn ns(key: &CStr) -> Retained<NSString> {
+pub(crate) fn ns(key: &CStr) -> Retained<NSString> {
     NSString::from_str(key.to_str().expect("ascii key"))
 }
 
-fn check(status: OSStatus, what: &str) -> Result<()> {
+pub(crate) fn check(status: OSStatus, what: &str) -> Result<()> {
     if status != 0 {
         let b = status.to_be_bytes();
         let fourcc: String = b
@@ -172,7 +172,7 @@ fn addr(selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
 }
 
 /// Reads a fixed-size property. `qualifier` is passed through as raw bytes.
-unsafe fn get_prop<T: Copy, Q>(
+pub(crate) unsafe fn get_prop<T: Copy, Q>(
     object: AudioObjectID,
     selector: AudioObjectPropertySelector,
     qualifier: Option<&Q>,
@@ -226,7 +226,7 @@ unsafe fn prop_size(
 }
 
 /// Reads a CFString property (returned +1) as an NSString.
-unsafe fn get_string_prop(
+pub(crate) unsafe fn get_string_prop(
     object: AudioObjectID,
     selector: AudioObjectPropertySelector,
     what: &str,
@@ -281,106 +281,150 @@ struct Format {
     bytes_per_frame: u32,
 }
 
-fn fourcc(v: u32) -> String {
+pub(crate) fn fourcc(v: u32) -> String {
     String::from_utf8_lossy(&v.to_be_bytes()).into_owned()
+}
+
+/// A global tap that excludes this process, wrapped in a private aggregate
+/// device. Both are destroyed on drop.
+pub(crate) struct TapDevice {
+    pub tap: AudioObjectID,
+    pub agg: AudioObjectID,
+    pub own: AudioObjectID,
+    /// PID read back from `own` (should equal ours).
+    pub own_pid: Option<i32>,
+    pub format: AudioStreamBasicDescription,
+    pub output_uid: String,
+}
+
+impl Drop for TapDevice {
+    fn drop(&mut self) {
+        unsafe {
+            AudioHardwareDestroyAggregateDevice(self.agg);
+            AudioHardwareDestroyProcessTap(self.tap);
+        }
+    }
+}
+
+/// `with_sub` adds the default output as the aggregate's main sub-device
+/// (AudioCap's shape); without it the aggregate holds the tap only.
+pub(crate) unsafe fn create_tap_device(name: &str, with_sub: bool) -> Result<TapDevice> {
+    let pid = std::process::id() as i32;
+    let system = kAudioObjectSystemObject as AudioObjectID;
+
+    // Our own process object, so the tap can exclude it. A process that has
+    // never touched Core Audio may not have one yet (kAudioObjectUnknown).
+    let own: AudioObjectID = get_prop(
+        system,
+        kAudioHardwarePropertyTranslatePIDToProcessObject,
+        Some(&pid),
+        "translate PID",
+    )
+    .unwrap_or(kAudioObjectUnknown);
+    let own_pid = (own != kAudioObjectUnknown)
+        .then(|| get_prop::<i32, ()>(own, kAudioProcessPropertyPID, None, "process PID").ok())
+        .flatten();
+    let exclude: Vec<Retained<NSNumber>> = if own != kAudioObjectUnknown {
+        vec![NSNumber::new_u32(own)]
+    } else {
+        vec![]
+    };
+    let exclude = NSArray::from_retained_slice(&exclude);
+
+    let desc = CATapDescription::initStereoGlobalTapButExcludeProcesses(
+        CATapDescription::alloc(),
+        &exclude,
+    );
+    desc.setName(&NSString::from_str(name));
+    desc.setPrivate(true);
+    desc.setMuteBehavior(CATapMuteBehavior::Unmuted);
+    let tap_uid = desc.UUID().UUIDString();
+
+    let mut tap: AudioObjectID = kAudioObjectUnknown;
+    check(
+        AudioHardwareCreateProcessTap(Some(&desc), &mut tap),
+        "AudioHardwareCreateProcessTap",
+    )?;
+
+    let agg = (|| -> Result<(AudioObjectID, AudioStreamBasicDescription, String)> {
+        let asbd: AudioStreamBasicDescription =
+            get_prop::<_, ()>(tap, kAudioTapPropertyFormat, None, "tap format")?;
+        let out_dev: AudioObjectID = get_prop::<_, ()>(
+            system,
+            kAudioHardwarePropertyDefaultOutputDevice,
+            None,
+            "default output device",
+        )?;
+        let out_uid = get_string_prop(out_dev, kAudioDevicePropertyDeviceUID, "output device UID")?;
+
+        let sub_device: Retained<NSDictionary<NSString, AnyObject>> =
+            NSDictionary::from_slices(&[&*ns(kAudioSubDeviceUIDKey)], &[&*out_uid as &AnyObject]);
+        let sub_tap: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
+            &[
+                &*ns(kAudioSubTapUIDKey),
+                &*ns(kAudioSubTapDriftCompensationKey),
+            ],
+            &[&*tap_uid as &AnyObject, &*NSNumber::new_bool(true)],
+        );
+        let agg_uid = NSUUID::new().UUIDString();
+        let mut keys = vec![
+            ns(kAudioAggregateDeviceNameKey),
+            ns(kAudioAggregateDeviceUIDKey),
+            ns(kAudioAggregateDeviceIsPrivateKey),
+            ns(kAudioAggregateDeviceIsStackedKey),
+            ns(kAudioAggregateDeviceTapAutoStartKey),
+            ns(kAudioAggregateDeviceTapListKey),
+        ];
+        let name = NSString::from_str(name);
+        let yes = NSNumber::new_bool(true);
+        let no = NSNumber::new_bool(false);
+        let subs = NSArray::from_retained_slice(&[sub_device]);
+        let taps = NSArray::from_retained_slice(&[sub_tap]);
+        let mut values: Vec<&AnyObject> = vec![&name, &agg_uid, &yes, &no, &yes, &taps];
+        if with_sub {
+            keys.push(ns(kAudioAggregateDeviceMainSubDeviceKey));
+            values.push(&out_uid);
+            keys.push(ns(kAudioAggregateDeviceSubDeviceListKey));
+            values.push(&subs);
+        }
+        let key_refs: Vec<&NSString> = keys.iter().map(|k| &**k).collect();
+        let dict: Retained<NSDictionary<NSString, AnyObject>> =
+            NSDictionary::from_slices(&key_refs, &values);
+        let cf_dict = &*(Retained::as_ptr(&dict) as *const CFDictionary);
+
+        let mut agg: AudioObjectID = kAudioObjectUnknown;
+        check(
+            AudioHardwareCreateAggregateDevice(cf_dict, NonNull::from(&mut agg)),
+            "AudioHardwareCreateAggregateDevice",
+        )?;
+        Ok((agg, asbd, out_uid.to_string()))
+    })();
+    match agg {
+        Ok((agg, format, output_uid)) => Ok(TapDevice {
+            tap,
+            agg,
+            own,
+            own_pid,
+            format,
+            output_uid,
+        }),
+        Err(e) => {
+            AudioHardwareDestroyProcessTap(tap);
+            Err(e)
+        }
+    }
 }
 
 pub fn run(secs: u64, out: &Path) -> Result<()> {
     let with_sub = std::env::var("BLAH3_TAP_SPIKE_MODE").as_deref() != Ok("nosub");
     std::fs::create_dir_all(out).with_context(|| format!("create {}", out.display()))?;
     let pid = std::process::id() as i32;
-    let system = kAudioObjectSystemObject as AudioObjectID;
 
     unsafe {
-        // Our own process object, so the tap can exclude it. A process that has
-        // never touched Core Audio may not have one yet (kAudioObjectUnknown).
-        let own: AudioObjectID = get_prop(
-            system,
-            kAudioHardwarePropertyTranslatePIDToProcessObject,
-            Some(&pid),
-            "translate PID",
-        )
-        .unwrap_or(kAudioObjectUnknown);
-        let own_pid = (own != kAudioObjectUnknown)
-            .then(|| get_prop::<i32, ()>(own, kAudioProcessPropertyPID, None, "process PID").ok())
-            .flatten();
-        let exclude: Vec<Retained<NSNumber>> = if own != kAudioObjectUnknown {
-            vec![NSNumber::new_u32(own)]
-        } else {
-            vec![]
-        };
-        let exclude = NSArray::from_retained_slice(&exclude);
-
-        let desc = CATapDescription::initStereoGlobalTapButExcludeProcesses(
-            CATapDescription::alloc(),
-            &exclude,
-        );
-        desc.setName(&NSString::from_str("Blah³ tap spike"));
-        desc.setPrivate(true);
-        desc.setMuteBehavior(CATapMuteBehavior::Unmuted);
-        let tap_uid = desc.UUID().UUIDString();
-
-        let mut tap: AudioObjectID = kAudioObjectUnknown;
-        check(
-            AudioHardwareCreateProcessTap(Some(&desc), &mut tap),
-            "AudioHardwareCreateProcessTap",
-        )?;
-
+        let dev = create_tap_device("Blah³ tap spike", with_sub)?;
+        let (agg, asbd, own, own_pid) = (dev.agg, dev.format, dev.own, dev.own_pid);
+        let out_uid = dev.output_uid.clone();
         let result = (|| -> Result<Report> {
-            let asbd: AudioStreamBasicDescription =
-                get_prop::<_, ()>(tap, kAudioTapPropertyFormat, None, "tap format")?;
-            let out_dev: AudioObjectID = get_prop::<_, ()>(
-                system,
-                kAudioHardwarePropertyDefaultOutputDevice,
-                None,
-                "default output device",
-            )?;
-            let out_uid =
-                get_string_prop(out_dev, kAudioDevicePropertyDeviceUID, "output device UID")?;
-
-            let sub_device: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
-                &[&*ns(kAudioSubDeviceUIDKey)],
-                &[&*out_uid as &AnyObject],
-            );
-            let sub_tap: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
-                &[
-                    &*ns(kAudioSubTapUIDKey),
-                    &*ns(kAudioSubTapDriftCompensationKey),
-                ],
-                &[&*tap_uid as &AnyObject, &*NSNumber::new_bool(true)],
-            );
-            let agg_uid = NSUUID::new().UUIDString();
-            let mut keys = vec![
-                ns(kAudioAggregateDeviceNameKey),
-                ns(kAudioAggregateDeviceUIDKey),
-                ns(kAudioAggregateDeviceIsPrivateKey),
-                ns(kAudioAggregateDeviceIsStackedKey),
-                ns(kAudioAggregateDeviceTapAutoStartKey),
-                ns(kAudioAggregateDeviceTapListKey),
-            ];
-            let name = NSString::from_str("Blah³ tap spike");
-            let yes = NSNumber::new_bool(true);
-            let no = NSNumber::new_bool(false);
-            let subs = NSArray::from_retained_slice(&[sub_device]);
-            let taps = NSArray::from_retained_slice(&[sub_tap]);
-            let mut values: Vec<&AnyObject> = vec![&name, &agg_uid, &yes, &no, &yes, &taps];
-            if with_sub {
-                keys.push(ns(kAudioAggregateDeviceMainSubDeviceKey));
-                values.push(&out_uid);
-                keys.push(ns(kAudioAggregateDeviceSubDeviceListKey));
-                values.push(&subs);
-            }
-            let key_refs: Vec<&NSString> = keys.iter().map(|k| &**k).collect();
-            let dict: Retained<NSDictionary<NSString, AnyObject>> =
-                NSDictionary::from_slices(&key_refs, &values);
-            let cf_dict = &*(Retained::as_ptr(&dict) as *const CFDictionary);
-
-            let mut agg: AudioObjectID = kAudioObjectUnknown;
-            check(
-                AudioHardwareCreateAggregateDevice(cf_dict, NonNull::from(&mut agg)),
-                "AudioHardwareCreateAggregateDevice",
-            )?;
-
             let agg_nominal_rate: f64 =
                 get_prop::<_, ()>(agg, kAudioDevicePropertyNominalSampleRate, None, "agg rate")
                     .unwrap_or(0.0);
@@ -440,7 +484,6 @@ pub fn run(secs: u64, out: &Path) -> Result<()> {
                 check(status, "AudioDeviceStart")?;
                 Ok(started.elapsed().as_secs_f64())
             })();
-            AudioHardwareDestroyAggregateDevice(agg);
             let elapsed = run?;
 
             let rate = asbd.mSampleRate.max(1.0);
@@ -493,7 +536,7 @@ pub fn run(secs: u64, out: &Path) -> Result<()> {
                 own_process_object_pid: own_pid,
                 excluded_self: own != kAudioObjectUnknown,
                 mode: if with_sub { "sub" } else { "nosub" }.into(),
-                output_device_uid: out_uid.to_string(),
+                output_device_uid: out_uid.clone(),
                 agg_nominal_rate,
                 agg_input_streams,
                 agg_taps,
@@ -525,7 +568,7 @@ pub fn run(secs: u64, out: &Path) -> Result<()> {
                 wav,
             })
         })();
-        AudioHardwareDestroyProcessTap(tap);
+        drop(dev);
 
         let report = result?;
         std::fs::write(
@@ -536,7 +579,7 @@ pub fn run(secs: u64, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn macos_version() -> String {
+pub(crate) fn macos_version() -> String {
     std::process::Command::new("sw_vers")
         .arg("-productVersion")
         .output()
